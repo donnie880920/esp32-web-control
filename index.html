@@ -15,7 +15,6 @@
     }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; }
     
-    /* 頂部 Header 與導覽列版面調整 */
     header { 
       background-color: #1a1d20; 
       color: white; 
@@ -27,7 +26,6 @@
     }
     header h2 { margin: 0; font-size: 1.2rem; }
 
-    /* 選單按鈕置中 */
     nav {
       position: absolute;
       left: 50%;
@@ -47,12 +45,7 @@
     }
     nav button.active { color: white; background-color: var(--primary); }
 
-    /* 右側操作按鈕區 */
-    .header-actions {
-      display: flex;
-      gap: 8px;
-    }
-
+    .header-actions { display: flex; gap: 8px; }
     .container { max-width: 900px; margin: 20px auto; padding: 0 15px; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
@@ -63,7 +56,6 @@
     .btn-success { background-color: #28a745; }
     .slider { width: 100%; margin: 5px 0 2px 0; }
     
-    /* 刻度標籤與按鈕樣式 */
     .ticks { display: flex; justify-content: space-between; font-size: 11px; color: #666; margin-bottom: 8px; }
     .tick-btn { cursor: pointer; padding: 2px 4px; border-radius: 3px; background: #eee; }
     .tick-btn:hover { background: #007bff; color: white; }
@@ -81,14 +73,13 @@
     .device-status { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #ddd; }
     .device-status.connected { background: #28a745; color: white; }
 
-    .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 10px; margin: 10px 0; }
+    .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 12px; margin: 10px 0; }
   </style>
 </head>
 <body>
 
 <header>
   <h2>ESP32-C3 控制矩陣</h2>
-  
   <nav>
     <button class="active" onclick="switchTab('dashboard')">群組控制</button>
     <button onclick="switchTab('bluetooth')">藍芽裝置</button>
@@ -107,6 +98,7 @@
 
 <div class="container">
 
+  <!-- TAB 1: 群組控制頁面 -->
   <div id="tab-dashboard" class="tab-content active">
     <div class="card">
       <h3>群組控制區</h3>
@@ -114,6 +106,7 @@
     </div>
   </div>
 
+  <!-- TAB 2: 藍芽裝置連線管理區 -->
   <div id="tab-bluetooth" class="tab-content">
     <div class="card">
       <h3>藍芽裝置連線管理</h3>
@@ -123,6 +116,7 @@
     </div>
   </div>
 
+  <!-- TAB 3: 群組編輯頁面 -->
   <div id="tab-group-edit" class="tab-content">
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -133,6 +127,7 @@
     </div>
   </div>
 
+  <!-- TAB 4: 腳位管理 -->
   <div id="tab-pins" class="tab-content">
     <div class="card">
       <h3>腳位編輯與隱藏設定</h3>
@@ -141,6 +136,7 @@
     </div>
   </div>
 
+  <!-- TAB 5: 排程設定 -->
   <div id="tab-schedule" class="tab-content">
     <div class="card">
       <h3>新增定時排程</h3>
@@ -340,12 +336,14 @@
     }
   }
 
-  async function sendPwmCommand(deviceId, pin, val) {
+  // 批量發送封包 (例如: "0,128;1,127")
+  async function sendBatchPwmCommand(deviceId, commands) {
     const dev = connectedDevices[deviceId];
     if (dev && dev.rxChar) {
       try {
+        const payload = commands.map(c => `${c.pin},${c.val}`).join(';');
         const encoder = new TextEncoder();
-        await dev.rxChar.writeValue(encoder.encode(`${pin},${val}`));
+        await dev.rxChar.writeValue(encoder.encode(payload + '\n'));
       } catch (e) {
         console.error("發送失敗:", e);
       }
@@ -367,7 +365,20 @@
     });
   }
 
-  // 3. 群組控制頁面渲染 (含單燈與雙色燈色溫控制)
+  // 雙色燈 PWM 核心計算邏輯 (互補且可按功率比例縮放)
+  function calculateDualLightPwm(ctVal, powerVal) {
+    // ctVal: 0 (100% 暖) ~ 255 (100% 冷)
+    // powerVal: 0 ~ 255
+    const warmBase = 255 - ctVal; // 暖光基準 (255~0)
+    const coolBase = ctVal;       // 冷光基準 (0~255)
+    
+    const powerRatio = powerVal / 255;
+    const warmPwm = Math.round(warmBase * powerRatio);
+    const coolPwm = Math.round(coolBase * powerRatio);
+
+    return { warmPwm, coolPwm };
+  }
+
   function renderGroupControl() {
     const container = document.getElementById('groupControlList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請至「群組編輯」頁面建立。</p>' : '';
@@ -376,31 +387,45 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
-      // 雙色燈控制區塊
       let dualControlsHtml = grp.dualLights.map(dl => {
-        const ctVal = dl.ct !== undefined ? dl.ct : 128; // 色溫 0(暖)~255(冷)
+        const ctVal = dl.ct !== undefined ? dl.ct : 128;
+        const powerVal = dl.power !== undefined ? dl.power : 255; // 預設 100% 功率
+
         return `
           <div class="dual-light-card">
             <div style="display:flex; justify-content:space-between; font-weight:bold;">
               <span>💡 雙色燈：${dl.name}</span>
-              <span id="ct-val-${grp.id}-${dl.id}">${Math.round((ctVal/255)*100)}% (冷)</span>
+              <span id="dl-summary-${grp.id}-${dl.id}">色溫: ${Math.round((ctVal/255)*100)}% (冷) | 功率: ${getPercentStr(powerVal)}</span>
             </div>
             <div style="font-size:12px; color:#666; margin-top:2px;">[暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}]</div>
-            <label style="font-size:13px; margin-top:5px; display:block;">色溫調節 (暖 ↔ 冷)：</label>
-            <input type="range" min="0" max="255" value="${ctVal}" class="slider"
-                   oninput="setDualLightCT('${grp.id}', '${dl.id}', this.value)">
+            
+            <!-- 1. 色溫調整 -->
+            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold;">色溫調整 (0=暖光, 255=冷光)：</label>
+            <input type="range" min="0" max="255" value="${ctVal}" id="ct-slider-${grp.id}-${dl.id}" class="slider"
+                   oninput="updateDualLight('${grp.id}', '${dl.id}')">
             <div class="ticks">
-              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 0)">100%暖光</span>
-              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 64)">25%冷光</span>
-              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 128)">50%中性</span>
-              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 191)">75%冷光</span>
-              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 255)">100%冷光</span>
+              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 0)">100%暖光</span>
+              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 64)">25%冷光</span>
+              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 128)">50%中性</span>
+              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 191)">75%冷光</span>
+              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 255)">100%冷光</span>
+            </div>
+
+            <!-- 2. 獨立功率 (亮度) 調整 -->
+            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold; color:#0056b3;">燈具功率調整 (等比例縮放 PWM)：</label>
+            <input type="range" min="0" max="255" value="${powerVal}" id="power-slider-${grp.id}-${dl.id}" class="slider"
+                   oninput="updateDualLight('${grp.id}', '${dl.id}')">
+            <div class="ticks">
+              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 0)">0%</span>
+              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 64)">25%</span>
+              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 128)">50%</span>
+              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 191)">75%</span>
+              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 255)">100%</span>
             </div>
           </div>
         `;
       }).join('');
 
-      // 單燈/腳位控制區塊
       let singleControlsHtml = grp.members.map(m => {
         const pinLabel = getPinDisplayName(m.deviceId, m.pin);
 
@@ -413,7 +438,7 @@
             <input type="range" min="0" max="255" value="0" 
                    id="slider-${grp.id}-${m.deviceId}-${m.pin}" class="slider" 
                    oninput="
-                     sendPwmCommand('${m.deviceId}', ${m.pin}, this.value);
+                     sendBatchPwmCommand('${m.deviceId}', [{pin: ${m.pin}, val: parseInt(this.value)}]);
                      document.getElementById('val-${grp.id}-${m.deviceId}-${m.pin}').innerText = getPercentStr(this.value);
                    ">
             <div class="ticks">
@@ -426,7 +451,7 @@
           </div>`;
       }).join('');
 
-      const masterVal = grp.lastPower !== undefined ? grp.lastPower : 0;
+      const masterVal = grp.lastPower !== undefined ? grp.lastPower : 255;
 
       container.innerHTML += `
         <div class="card" style="border: 1px solid #e0e0e0;">
@@ -435,7 +460,7 @@
             <span id="grp-val-${grp.id}" style="font-weight:bold; color:var(--primary);">${getPercentStr(masterVal)}</span>
           </div>
           
-          <label style="font-weight:bold;">群組總量同步調整：</label>
+          <label style="font-weight:bold;">群組總功率同步調整：</label>
           <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value)">
           <div class="ticks">
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
@@ -448,7 +473,6 @@
           <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具 ▼</button>
           
           <div id="detail-${grp.id}" class="group-detail">
-            <p style="font-size:12px; color:#666;">（此處調整只會改動該燈具，色溫不會被總功率蓋掉）</p>
             ${dualControlsHtml}
             ${singleControlsHtml || (grp.dualLights.length === 0 ? '<p style="color:#888">此群組尚未添加任何燈具成員。</p>' : '')}
           </div>
@@ -456,6 +480,7 @@
     });
   }
 
+  // 群組總功率調整
   function setGroupPwm(groupId, val) {
     val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
@@ -464,11 +489,14 @@
     grp.lastPower = val;
     document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
 
-    // 1. 單腳位成員控制
+    const deviceCmdMap = {};
+
+    // 1. 單腳位成員
     if (grp.members) {
       grp.members.forEach(m => {
-        sendPwmCommand(m.deviceId, m.pin, val);
-        
+        if (!deviceCmdMap[m.deviceId]) deviceCmdMap[m.deviceId] = [];
+        deviceCmdMap[m.deviceId].push({ pin: m.pin, val: val });
+
         const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
         const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
         if (subSlider) subSlider.value = val;
@@ -476,44 +504,81 @@
       });
     }
 
-    // 2. 雙色燈成員控制 (根據設定好的色溫比率 * 總功率)
+    // 2. 雙色燈成員（依群組總功率按比例縮放）
     if (grp.dualLights) {
       grp.dualLights.forEach(dl => {
-        const ct = dl.ct !== undefined ? dl.ct : 128;
-        const warmRatio = (255 - ct) / 255;
-        const coolRatio = ct / 255;
+        dl.power = val; // 同步內部功率
+        const ctVal = dl.ct !== undefined ? dl.ct : 128;
 
-        const warmPwm = Math.round(val * warmRatio);
-        const coolPwm = Math.round(val * coolRatio);
+        const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, val);
 
-        sendPwmCommand(dl.deviceId, dl.warmPin, warmPwm);
-        sendPwmCommand(dl.deviceId, dl.coolPin, coolPwm);
+        if (!deviceCmdMap[dl.deviceId]) deviceCmdMap[dl.deviceId] = [];
+        deviceCmdMap[dl.deviceId].push({ pin: dl.warmPin, val: warmPwm });
+        deviceCmdMap[dl.deviceId].push({ pin: dl.coolPin, val: coolPwm });
+
+        // 更新 UI
+        const pSlider = document.getElementById(`power-slider-${grp.id}-${dl.id}`);
+        const summarySpan = document.getElementById(`dl-summary-${grp.id}-${dl.id}`);
+        if (pSlider) pSlider.value = val;
+        if (summarySpan) summarySpan.innerText = `色溫: ${Math.round((ctVal/255)*100)}% (冷) | 功率: ${getPercentStr(val)}`;
       });
     }
+
+    // 打包一次發送
+    Object.keys(deviceCmdMap).forEach(devId => {
+      sendBatchPwmCommand(devId, deviceCmdMap[devId]);
+    });
 
     saveLocalData();
   }
 
-  function setDualLightCT(groupId, dualLightId, ctVal) {
-    ctVal = parseInt(ctVal);
+  // 獨立更新單一雙色燈（色溫或功率改變時呼叫）
+  function updateDualLight(groupId, dualLightId) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp || !grp.dualLights) return;
 
     const dl = grp.dualLights.find(d => d.id === dualLightId);
     if (!dl) return;
 
-    dl.ct = ctVal;
-    const valSpan = document.getElementById(`ct-val-${groupId}-${dualLightId}`);
-    if (valSpan) valSpan.innerText = `${Math.round((ctVal/255)*100)}% (冷)`;
+    const ctSlider = document.getElementById(`ct-slider-${groupId}-${dualLightId}`);
+    const powerSlider = document.getElementById(`power-slider-${groupId}-${dualLightId}`);
 
-    // 保持目前總功率，重新發送雙色燈 PWM
-    const currentPower = grp.lastPower !== undefined ? grp.lastPower : 0;
-    setGroupPwm(groupId, currentPower);
+    const ctVal = parseInt(ctSlider.value);
+    const powerVal = parseInt(powerSlider.value);
+
+    dl.ct = ctVal;
+    dl.power = powerVal;
+
+    const summarySpan = document.getElementById(`dl-summary-${groupId}-${dualLightId}`);
+    if (summarySpan) {
+      summarySpan.innerText = `色溫: ${Math.round((ctVal/255)*100)}% (冷) | 功率: ${getPercentStr(powerVal)}`;
+    }
+
+    // 計算並發送雙色溫 PWM
+    const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, powerVal);
+
+    sendBatchPwmCommand(dl.deviceId, [
+      { pin: dl.warmPin, val: warmPwm },
+      { pin: dl.coolPin, val: coolPwm }
+    ]);
+
+    saveLocalData();
   }
 
-  function setDualLightCTSlider(groupId, dualLightId, val) {
-    setDualLightCT(groupId, dualLightId, val);
-    renderGroupControl();
+  function setDualLightCTQuick(groupId, dualLightId, val) {
+    const slider = document.getElementById(`ct-slider-${groupId}-${dualLightId}`);
+    if (slider) {
+      slider.value = val;
+      updateDualLight(groupId, dualLightId);
+    }
+  }
+
+  function setDualLightPowerQuick(groupId, dualLightId, val) {
+    const slider = document.getElementById(`power-slider-${groupId}-${dualLightId}`);
+    if (slider) {
+      slider.value = val;
+      updateDualLight(groupId, dualLightId);
+    }
   }
 
   function setMasterGroupSlider(groupId, val) {
@@ -528,7 +593,7 @@
     const slider = document.getElementById(`slider-${groupId}-${deviceId}-${pin}`);
     if (slider) {
       slider.value = val;
-      sendPwmCommand(deviceId, pin, val);
+      sendBatchPwmCommand(deviceId, [{ pin: pin, val: val }]);
       document.getElementById(`val-${groupId}-${deviceId}-${pin}`).innerText = getPercentStr(val);
     }
   }
@@ -538,7 +603,6 @@
     el.style.display = el.style.display === 'block' ? 'none' : 'block';
   }
 
-  // 4. 群組編輯頁面 (包含雙色燈設定區塊)
   function renderGroupEdit() {
     const container = document.getElementById('groupEditList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請點擊上方按鈕建立。</p>' : '';
@@ -547,7 +611,6 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
-      // 單燈勾選清單
       let memberOptionsHtml = '';
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
@@ -565,7 +628,6 @@
         });
       });
 
-      // 已建立的雙色燈清單
       let dualLightsListHtml = grp.dualLights.map(dl => `
         <div style="display:flex; justify-content:space-between; align-items:center; background:#f8f9fa; padding:6px 10px; margin-bottom:6px; border-radius:4px;">
           <span>💡 <strong>${dl.name}</strong> （暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}）</span>
@@ -603,7 +665,7 @@
       name: name,
       members: [],
       dualLights: [],
-      lastPower: 0
+      lastPower: 255
     });
     saveLocalData();
     renderGroupEdit();
@@ -634,7 +696,8 @@
       deviceId: devIds[0],
       warmPin: parseInt(warmPin),
       coolPin: parseInt(coolPin),
-      ct: 128
+      ct: 128,
+      power: 255
     });
 
     saveLocalData();
@@ -668,7 +731,6 @@
     renderGroupEdit();
   }
 
-  // 5. 腳位名稱編輯與隱藏設定
   function renderPinMasking() {
     const container = document.getElementById('pinMaskContainer');
     const devIds = Object.keys(deviceConfigs);
@@ -722,7 +784,6 @@
     renderPinMasking();
   }
 
-  // 6. 排程邏輯
   function updateSchedDisplay(val) {
     document.getElementById('schedPwmVal').innerText = getPercentStr(val);
   }
@@ -814,7 +875,6 @@
     renderSchedules();
   }
 
-  // 排程計時器
   setInterval(() => {
     const now = new Date();
     const currentDay = now.getDay();
@@ -826,7 +886,7 @@
           setGroupPwm(sch.targetVal, sch.pwmVal);
         } else {
           const [devId, pin] = sch.targetVal.split('|');
-          sendPwmCommand(devId, pin, sch.pwmVal);
+          sendBatchPwmCommand(devId, [{ pin: parseInt(pin), val: parseInt(sch.pwmVal) }]);
         }
       }
     });
