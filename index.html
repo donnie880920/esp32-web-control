@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 13-Pin PWM 控制器</title>
+  <title>ESP32 13-Pin PWM 控制與排程器</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -20,7 +20,7 @@
       margin-bottom: 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
-    h2, h3 { margin-top: 0; color: #1a73e8; }
+    h2, h3, h4 { margin-top: 0; color: #1a73e8; }
     button {
       background-color: #1a73e8;
       color: white;
@@ -44,24 +44,13 @@
     }
     input[type=range] { width: 100%; height: 6px; }
     
-    /* 綁定雙色溫設定區 */
-    .cct-setup-box {
-      background: #eef4fc;
-      border: 1px dashed #1a73e8;
-      padding: 12px;
+    /* 雙色溫控制專屬樣式 */
+    .cct-box {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      padding: 15px;
       border-radius: 8px;
       margin-bottom: 15px;
-    }
-    .cct-setup-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .cct-setup-row select {
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
     }
 
     /* 排程樣式 */
@@ -118,36 +107,27 @@
     <div id="statusText" class="status-badge">狀態：未連線</div>
   </div>
 
-  <!-- 2. 群組控制與雙色溫編輯 -->
+  <!-- 2. 群組控制與雙色溫模式 -->
   <div class="card">
-    <h3>群組與雙色溫控制</h3>
+    <h3>群組總控制 (全頻道)</h3>
     
-    <!-- 雙色溫綁定設定按鈕區 -->
-    <div class="cct-setup-box">
-      <div style="font-weight: bold; margin-bottom: 8px; color: #1a73e8;">設定雙色溫燈具組合</div>
-      <div class="cct-setup-row">
-        <label>冷色腳位:</label>
-        <select id="coldPinSelect"></select>
-        <label>暖色腳位:</label>
-        <select id="warmPinSelect"></select>
-      </div>
-      <button onclick="toggleCctBinding()" id="bindBtn" style="margin-bottom: 0;">將選取腳位編輯為雙色溫燈</button>
-    </div>
+    <!-- 切換雙色溫功能按鈕 -->
+    <button id="toggleCctBtn" class="btn-secondary" onclick="toggleCctMode()">編輯成雙色溫控制 (GPIO 0 & 1)</button>
 
-    <!-- 雙色溫控制面板 (預設隱藏，綁定後顯示) -->
-    <div id="cctControlPanel" style="display: none; background: #fff8e1; border: 1px solid #ffe082; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-      <h4 style="margin-top:0; color: #f57f17;">雙色溫即時控制</h4>
+    <!-- 雙色溫展開控制區 (預設隱藏) -->
+    <div id="cctPanel" class="cct-box" style="display: none;">
+      <h4 style="color: #f57f17;">雙色溫模式 (GPIO 0 冷色 / GPIO 1 暖色)</h4>
       
-      <!-- 雙色溫拉桿 -->
+      <!-- 1. 色溫調整拉桿 -->
       <div class="slider-group">
         <div class="slider-label">
-          <span>冷色 (GPIO <span id="coldPinLabel">0</span>): <span id="coldPercentDisplay">50%</span></span>
-          <span>暖色 (GPIO <span id="warmPinLabel">1</span>): <span id="warmPercentDisplay">50%</span></span>
+          <span>冷色 (GPIO 0): <span id="coldPercentDisplay">50%</span></span>
+          <span>暖色 (GPIO 1): <span id="warmPercentDisplay">50%</span></span>
         </div>
         <input type="range" id="cctRatioSlider" min="0" max="100" value="50" oninput="onCctRatioChange(this.value)">
       </div>
 
-      <!-- 雙色溫專屬功率拉桿 -->
+      <!-- 2. 雙色溫專屬功率拉桿 -->
       <div class="slider-group">
         <div class="slider-label">
           <span>雙色溫獨立功率</span>
@@ -157,17 +137,17 @@
       </div>
 
       <div class="debug-info">
-        目前雙色溫 PWM 輸出 ➔ 冷色: <span id="pwmColdVal">128</span> | 暖色: <span id="pwmWarmVal">128</span>
+        實時 PWM 數值 ➔ GPIO 0 (冷): <span id="pwm0Val">128</span> | GPIO 1 (暖): <span id="pwm1Val">128</span>
       </div>
     </div>
 
-    <!-- 全頻道總功率控制 (不影響冷暖色調比例) -->
+    <!-- 全頻道總功率拉桿 (不影響雙色溫比例) -->
     <div class="slider-group">
       <div class="slider-label">
-        <span>全頻道總功率控制 (僅調整功率幅度)</span>
+        <span>全頻道總亮度 / 總功率</span>
         <span id="groupDisplay">100%</span>
       </div>
-      <input type="range" id="groupSlider" min="0" max="100" value="100" oninput="onGroupPowerChange(this.value)">
+      <input type="range" id="groupSlider" min="0" max="100" value="100" oninput="onGroupSliderChange(this.value)">
     </div>
   </div>
 
@@ -178,7 +158,7 @@
       <input type="time" id="schedTime" required>
       <select id="schedTarget">
         <option value="ALL">全頻道 (GROUP)</option>
-        <option value="CCT" id="cctSchedOption" disabled>雙色溫組合 (需先綁定)</option>
+        <!-- 動態帶入 GPIO 0~10, 20, 21 -->
       </select>
       <input type="number" id="schedVal" min="0" max="100" placeholder="功率 %" style="width: 70px;" value="100">
       <button onclick="addSchedule()" style="width: auto; margin-bottom: 0;">新增排程</button>
@@ -196,7 +176,7 @@
   </div>
 
   <script>
-    // BLE UUID 設定
+    // UUID 設定
     const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
@@ -206,42 +186,20 @@
     let bleDevice = null;
     let rxCharacteristic = null;
     let schedules = [];
-    let lastExecutedMin = "";
+    let lastExecutedMin = ""; // 防止同分鐘重複觸發
 
-    // 雙色溫邏輯變數
-    let isCctBound = false;
-    let coldPin = 0;
-    let warmPin = 1;
-    let cctRatio = 0.5;      // 冷暖比例 (0.0 = 全冷, 1.0 = 全暖)
-    let cctPower = 1.0;      // 雙色溫獨立功率 (0.0 ~ 1.0)
-    let globalPower = 1.0;   // 全群組總功率 (0.0 ~ 1.0)
+    // 雙色溫核心狀態變數
+    let isCctMode = false;
+    let cctRatio = 0.5;       // 冷暖比例 (0.0 = 全冷, 1.0 = 全暖)
+    let cctPower = 1.0;       // 雙色溫獨立功率 (0.0 ~ 1.0)
+    let globalPower = 1.0;    // 全頻道總功率 (0.0 ~ 1.0)
 
-    // 個別 GPIO 狀態記錄 (0 ~ 255)
-    let pinPwmState = {};
-
+    // 初始化頁面 UI
     window.onload = () => {
-      ALL_PINS.forEach(pin => pinPwmState[pin] = 0);
-      initSelectOptions();
       initSinglePinSliders();
-      startScheduleTimer();
+      initScheduleOptions();
+      startScheduleTimer(); // 啟動背景對時排程
     };
-
-    // 初始化選單
-    function initSelectOptions() {
-      const coldSelect = document.getElementById('coldPinSelect');
-      const warmSelect = document.getElementById('warmPinSelect');
-      const schedTarget = document.getElementById('schedTarget');
-
-      ALL_PINS.forEach(pin => {
-        coldSelect.add(new Option(`GPIO ${pin}`, pin));
-        warmSelect.add(new Option(`GPIO ${pin}`, pin));
-        schedTarget.add(new Option(`GPIO ${pin}`, pin));
-      });
-
-      // 預設預設 0 為冷、1 為暖
-      coldSelect.value = 0;
-      warmSelect.value = 1;
-    }
 
     // 動態建置 13 隻單燈控制拉桿
     function initSinglePinSliders() {
@@ -250,7 +208,6 @@
       ALL_PINS.forEach(pin => {
         const div = document.createElement('div');
         div.className = 'slider-group';
-        div.id = `single-box-pin-${pin}`;
         div.innerHTML = `
           <div class="slider-label">
             <span>GPIO ${pin} 亮度</span>
@@ -262,7 +219,18 @@
       });
     }
 
-    // 1. 藍芽連線
+    // 初始化排程選單
+    function initScheduleOptions() {
+      const select = document.getElementById('schedTarget');
+      ALL_PINS.forEach(pin => {
+        const opt = document.createElement('option');
+        opt.value = pin;
+        opt.innerText = `GPIO ${pin}`;
+        select.appendChild(opt);
+      });
+    }
+
+    // 1. BLE 連線
     async function connectBle() {
       try {
         document.getElementById('statusText').innerText = "搜尋裝置中...";
@@ -289,51 +257,41 @@
       }
     }
 
-    // 2. 底層 BLE 發送指令
+    // 2. 底層 BLE 傳送指令
     async function sendBleCommand(payload) {
       if (!rxCharacteristic) return;
       try {
         const encoder = new TextEncoder();
         await rxCharacteristic.writeValue(encoder.encode(payload));
-        console.log("發送至 ESP32:", payload);
+        console.log("已發送至 ESP32:", payload);
       } catch (err) {
         console.error("發送失敗:", err);
       }
     }
 
-    // 3. 綁定 / 解除雙色溫組合
-    function toggleCctBinding() {
-      if (!isCctBound) {
-        coldPin = parseInt(document.getElementById('coldPinSelect').value);
-        warmPin = parseInt(document.getElementById('warmPinSelect').value);
+    // 3. 切換雙色溫控制模式
+    function toggleCctMode() {
+      isCctMode = !isCctMode;
+      const cctPanel = document.getElementById('cctPanel');
+      const toggleBtn = document.getElementById('toggleCctBtn');
 
-        if (coldPin === warmPin) {
-          alert("冷色腳位與暖色腳位不能相同！");
-          return;
-        }
+      if (isCctMode) {
+        cctPanel.style.display = 'block';
+        toggleBtn.innerText = "關閉雙色溫控制面板";
+        toggleBtn.className = "btn-danger";
 
-        isCctBound = true;
-        document.getElementById('cctControlPanel').style.display = 'block';
-        document.getElementById('coldPinLabel').innerText = coldPin;
-        document.getElementById('warmPinLabel').innerText = warmPin;
-        document.getElementById('bindBtn').innerText = "解除雙色溫綁定";
-        document.getElementById('bindBtn').className = "btn-danger";
-        document.getElementById('cctSchedOption').disabled = false;
-
-        // 停用並標示單燈區對應的腳位拉桿，避免衝突
-        setSingleSliderState(coldPin, true, "雙色溫控制中");
-        setSingleSliderState(warmPin, true, "雙色溫控制中");
+        // 鎖定單燈區 GPIO 0 與 1 的獨立拉桿，防止衝突
+        setSingleSliderState(0, true, "雙色溫模式中");
+        setSingleSliderState(1, true, "雙色溫模式中");
 
         updateCctPwm();
       } else {
-        isCctBound = false;
-        document.getElementById('cctControlPanel').style.display = 'none';
-        document.getElementById('bindBtn').innerText = "將選取腳位編輯為雙色溫燈";
-        document.getElementById('bindBtn').className = "";
-        document.getElementById('cctSchedOption').disabled = true;
+        cctPanel.style.display = 'none';
+        toggleBtn.innerText = "編輯成雙色溫控制 (GPIO 0 & 1)";
+        toggleBtn.className = "btn-secondary";
 
-        setSingleSliderState(coldPin, false);
-        setSingleSliderState(warmPin, false);
+        setSingleSliderState(0, false);
+        setSingleSliderState(1, false);
       }
     }
 
@@ -344,81 +302,75 @@
       if (display && disabled) display.innerText = text;
     }
 
-    // 4. 計算並發送雙色溫 PWM (考量色溫比、雙色溫功率與總群組功率)
+    // 4. 計算並同步發送 GPIO 0 與 GPIO 1 的 PWM
     function updateCctPwm() {
-      if (!isCctBound) return;
+      if (!isCctMode) return;
 
       const coldRatio = 1.0 - cctRatio;
       const warmRatio = cctRatio;
 
-      // PWM = 255 * 冷/暖比 * 雙色溫獨立功率 * 全頻道總功率
-      const pwmCold = Math.round(255 * coldRatio * cctPower * globalPower);
-      const pwmWarm = Math.round(255 * warmRatio * cctPower * globalPower);
-
-      pinPwmState[coldPin] = pwmCold;
-      pinPwmState[warmPin] = pwmWarm;
+      // PWM = 255 * 冷暖比例 * 雙色溫獨立功率 * 全頻道總功率
+      const pwm0 = Math.round(255 * coldRatio * cctPower * globalPower);
+      const pwm1 = Math.round(255 * warmRatio * cctPower * globalPower);
 
       document.getElementById('coldPercentDisplay').innerText = `${Math.round(coldRatio * 100)}%`;
       document.getElementById('warmPercentDisplay').innerText = `${Math.round(warmRatio * 100)}%`;
-      document.getElementById('pwmColdVal').innerText = pwmCold;
-      document.getElementById('pwmWarmVal').innerText = pwmWarm;
+      document.getElementById('pwm0Val').innerText = pwm0;
+      document.getElementById('pwm1Val').innerText = pwm1;
 
-      sendBleCommand(`${coldPin},${pwmCold},${warmPin},${pwmWarm}`);
+      sendBleCommand(`0,${pwm0},1,${pwm1}`);
     }
 
-    // 雙色溫比例改變
+    // 雙色溫比例改變 (0 ~ 100)
     function onCctRatioChange(val) {
       cctRatio = parseFloat(val) / 100;
       updateCctPwm();
     }
 
-    // 雙色溫獨立功率改變
+    // 雙色溫獨立功率改變 (0 ~ 100)
     function onCctPowerChange(val) {
       cctPower = parseFloat(val) / 100;
       document.getElementById('cctPowerDisplay').innerText = `${val}%`;
       updateCctPwm();
     }
 
-    // 5. 群組總功率調整 (只改動功率幅度，不影響雙色溫拉桿的冷暖比例)
-    function onGroupPowerChange(val) {
-      globalPower = parseFloat(val) / 100;
-      document.getElementById('groupDisplay').innerText = `${val}%`;
+    // 5. 單燈控制發送
+    function onSinglePinChange(pin, rawVal) {
+      const percent = Math.round((rawVal / 255) * 100);
+      document.getElementById(`display-pin-${pin}`).innerText = `${percent}%`;
+      sendBleCommand(`${pin},${rawVal}`);
+    }
+
+    // 6. 群組總控制 (調整全頻道總功率)
+    function onGroupSliderChange(percentVal) {
+      globalPower = parseFloat(percentVal) / 100;
+      document.getElementById('groupDisplay').innerText = `${percentVal}%`;
 
       let payloadArray = [];
 
-      ALL_PINS.forEach(pin => {
-        if (isCctBound && (pin === coldPin || pin === warmPin)) {
-          // 雙色溫腳位在 updateCctPwm 內部處理
-        } else {
-          // 一般腳位等比例縮放功率
-          const baseVal = document.getElementById(`slider-pin-${pin}`).value;
-          const finalPwm = Math.round(baseVal * globalPower);
-          pinPwmState[pin] = finalPwm;
-          payloadArray.push(`${pin},${finalPwm}`);
-        }
-      });
-
-      // 更新雙色溫 PWM 輸出
-      if (isCctBound) {
+      // 1. 如果開啓雙色溫，先更新雙色溫腳位
+      if (isCctMode) {
         updateCctPwm();
       }
+
+      // 2. 處理其它一般腳位（等比例縮放）
+      ALL_PINS.forEach(pin => {
+        if (isCctMode && (pin === 0 || pin === 1)) {
+          // GPIO 0 與 1 由 updateCctPwm 發送
+        } else {
+          const rawVal = Math.round((percentVal / 100) * 255);
+          document.getElementById(`slider-pin-${pin}`).value = rawVal;
+          document.getElementById(`display-pin-${pin}`).innerText = `${percentVal}%`;
+          payloadArray.push(`${pin},${rawVal}`);
+        }
+      });
 
       if (payloadArray.length > 0) {
         sendBleCommand(payloadArray.join(','));
       }
     }
 
-    // 6. 單燈控制改變
-    function onSinglePinChange(pin, rawVal) {
-      const percent = Math.round((rawVal / 255) * 100);
-      document.getElementById(`display-pin-${pin}`).innerText = `${percent}%`;
-      
-      const finalPwm = Math.round(rawVal * globalPower);
-      pinPwmState[pin] = finalPwm;
-      sendBleCommand(`${pin},${finalPwm}`);
-    }
-
-    // 7. 排程邏輯
+    // 7. 排程管理邏輯
     function addSchedule() {
       const timeVal = document.getElementById('schedTime').value;
       const targetVal = document.getElementById('schedTarget').value;
@@ -456,11 +408,7 @@
       schedules.forEach(s => {
         const item = document.createElement('div');
         item.className = 'schedule-item';
-        let targetText = "";
-        if (s.target === 'ALL') targetText = '全頻道功率';
-        else if (s.target === 'CCT') targetText = '雙色溫燈功率';
-        else targetText = `GPIO ${s.target}`;
-
+        const targetText = s.target === 'ALL' ? '全頻道總功率' : `GPIO ${s.target}`;
         item.innerHTML = `
           <div>
             <b>${s.time}</b> ➔ [${targetText}] 設定為 <b>${s.percent}%</b>
@@ -471,23 +419,20 @@
       });
     }
 
-    // 排程對時器
+    // 8. 背景定時器 (精準校準至秒數對齊)
     function startScheduleTimer() {
       const checkAndTrigger = () => {
         const now = new Date();
         const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+        // 避免同分鐘內重複執行
         if (currentTimeStr !== lastExecutedMin) {
           schedules.forEach(s => {
             if (s.time === currentTimeStr) {
               console.log(`觸發排程 [${currentTimeStr}]: Target=${s.target}, Percent=${s.percent}%`);
-              
               if (s.target === 'ALL') {
                 document.getElementById('groupSlider').value = s.percent;
-                onGroupPowerChange(s.percent);
-              } else if (s.target === 'CCT' && isCctBound) {
-                document.getElementById('cctPowerSlider').value = s.percent;
-                onCctPowerChange(s.percent);
+                onGroupSliderChange(s.percent);
               } else {
                 const pin = parseInt(s.target);
                 const rawPwm = Math.round((s.percent / 100) * 255);
@@ -499,6 +444,7 @@
           lastExecutedMin = currentTimeStr;
         }
 
+        // 動態計算距離下一分鐘 00 秒的時間，實現精準定時
         const nextInterval = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
         setTimeout(checkAndTrigger, nextInterval);
       };
