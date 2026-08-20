@@ -336,17 +336,28 @@
     }
   }
 
-  // 批量發送封包 (例如: "0,128;1,127")
+  // 核心發送：取得所有 connectedDevices 的目標特徵並發送打包指令
   async function sendBatchPwmCommand(deviceId, commands) {
-    const dev = connectedDevices[deviceId];
+    let dev = connectedDevices[deviceId];
+    
+    // 若找不到精確 ID，則自動Fallback使用第一個已連線的藍芽裝置（避免裝置ID不一致問題）
+    if (!dev) {
+      const activeIds = Object.keys(connectedDevices);
+      if (activeIds.length > 0) {
+        dev = connectedDevices[activeIds[0]];
+      }
+    }
+
     if (dev && dev.rxChar) {
       try {
         const payload = commands.map(c => `${c.pin},${c.val}`).join(';');
         const encoder = new TextEncoder();
         await dev.rxChar.writeValue(encoder.encode(payload + '\n'));
       } catch (e) {
-        console.error("發送失敗:", e);
+        console.error("發送藍芽指令失敗:", e);
       }
+    } else {
+      console.warn("無法發送指令：無可用的藍芽連線！");
     }
   }
 
@@ -365,12 +376,10 @@
     });
   }
 
-  // 雙色燈 PWM 核心計算邏輯 (互補且可按功率比例縮放)
+  // 雙色燈 PWM 雙腳位邏輯 (互補且可按功率比例縮放)
   function calculateDualLightPwm(ctVal, powerVal) {
-    // ctVal: 0 (100% 暖) ~ 255 (100% 冷)
-    // powerVal: 0 ~ 255
-    const warmBase = 255 - ctVal; // 暖光基準 (255~0)
-    const coolBase = ctVal;       // 冷光基準 (0~255)
+    const warmBase = 255 - ctVal; // 暖光 PWM (255 ~ 0)
+    const coolBase = ctVal;       // 冷光 PWM (0 ~ 255)
     
     const powerRatio = powerVal / 255;
     const warmPwm = Math.round(warmBase * powerRatio);
@@ -389,7 +398,7 @@
 
       let dualControlsHtml = grp.dualLights.map(dl => {
         const ctVal = dl.ct !== undefined ? dl.ct : 128;
-        const powerVal = dl.power !== undefined ? dl.power : 255; // 預設 100% 功率
+        const powerVal = dl.power !== undefined ? dl.power : 255;
 
         return `
           <div class="dual-light-card">
@@ -480,7 +489,7 @@
     });
   }
 
-  // 群組總功率調整
+  // 群組總功率調整 (打包所有雙腳位與單腳位指令)
   function setGroupPwm(groupId, val) {
     val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
@@ -504,17 +513,20 @@
       });
     }
 
-    // 2. 雙色燈成員（依群組總功率按比例縮放）
+    // 2. 雙色燈成員（同時將暖光與冷光腳位打包送出）
     if (grp.dualLights) {
       grp.dualLights.forEach(dl => {
-        dl.power = val; // 同步內部功率
+        dl.power = val;
         const ctVal = dl.ct !== undefined ? dl.ct : 128;
 
         const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, val);
 
-        if (!deviceCmdMap[dl.deviceId]) deviceCmdMap[dl.deviceId] = [];
-        deviceCmdMap[dl.deviceId].push({ pin: dl.warmPin, val: warmPwm });
-        deviceCmdMap[dl.deviceId].push({ pin: dl.coolPin, val: coolPwm });
+        const targetDev = dl.deviceId || Object.keys(connectedDevices)[0];
+        if (targetDev) {
+          if (!deviceCmdMap[targetDev]) deviceCmdMap[targetDev] = [];
+          deviceCmdMap[targetDev].push({ pin: dl.warmPin, val: warmPwm });
+          deviceCmdMap[targetDev].push({ pin: dl.coolPin, val: coolPwm });
+        }
 
         // 更新 UI
         const pSlider = document.getElementById(`power-slider-${grp.id}-${dl.id}`);
@@ -524,7 +536,7 @@
       });
     }
 
-    // 打包一次發送
+    // 將所有指令一次性打包給藍芽
     Object.keys(deviceCmdMap).forEach(devId => {
       sendBatchPwmCommand(devId, deviceCmdMap[devId]);
     });
@@ -532,7 +544,7 @@
     saveLocalData();
   }
 
-  // 獨立更新單一雙色燈（色溫或功率改變時呼叫）
+  // 獨立更新單一雙色燈（打包暖光與冷光的雙腳位指令）
   function updateDualLight(groupId, dualLightId) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp || !grp.dualLights) return;
@@ -554,9 +566,10 @@
       summarySpan.innerText = `色溫: ${Math.round((ctVal/255)*100)}% (冷) | 功率: ${getPercentStr(powerVal)}`;
     }
 
-    // 計算並發送雙色溫 PWM
+    // 計算暖光與冷光 PWM
     const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, powerVal);
 
+    // 打包發送，確保格式為 0,128;1,127
     sendBatchPwmCommand(dl.deviceId, [
       { pin: dl.warmPin, val: warmPwm },
       { pin: dl.coolPin, val: coolPwm }
@@ -676,24 +689,21 @@
     if (!grp) return;
 
     const devIds = Object.keys(deviceConfigs);
-    if (devIds.length === 0) {
-      alert("請先在藍芽頁面配對連線 ESP32 裝置！");
-      return;
-    }
+    const activeDevId = devIds.length > 0 ? devIds[0] : 'default_dev';
 
     const name = prompt("請輸入雙色燈名稱：", "主燈 1");
     if (!name) return;
 
-    const warmPin = prompt("請輸入【暖光】GPIO 腳位 (例如: 1)：", "1");
-    const coolPin = prompt("請輸入【冷光】GPIO 腳位 (例如: 2)：", "2");
+    const warmPin = prompt("請輸入【暖光】GPIO 腳位 (例如: 0)：", "0");
+    const coolPin = prompt("請輸入【冷光】GPIO 腳位 (例如: 1)：", "1");
 
-    if (!warmPin || !coolPin) return;
+    if (warmPin === null || coolPin === null) return;
 
     if (!grp.dualLights) grp.dualLights = [];
     grp.dualLights.push({
       id: 'dl_' + Date.now(),
       name: name,
-      deviceId: devIds[0],
+      deviceId: activeDevId,
       warmPin: parseInt(warmPin),
       coolPin: parseInt(coolPin),
       ct: 128,
