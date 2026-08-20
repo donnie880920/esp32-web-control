@@ -3,733 +3,188 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32-C3 多裝置藍芽 PWM 矩陣控制系統</title>
+  <title>ESP32-C3 藍芽 13-Pin PWM 控制器</title>
   <style>
-    :root {
-      --primary: #007bff;
-      --bg: #f4f6f9;
-      --card-bg: #ffffff;
-      --text: #333333;
-      --gray: #6c757d;
-      --disabled: #e9ecef;
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 600px;
+      margin: 20px auto;
+      padding: 0 15px;
+      background-color: #f8f9fa;
+      color: #333;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; }
-    
-    /* 頂部 Header 與導覽列版面調整 */
-    header { 
-      background-color: #1a1d20; 
-      color: white; 
-      padding: 15px 20px; 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center; 
-      position: relative;
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
-    header h2 { margin: 0; font-size: 1.2rem; }
-
-    /* 選單按鈕置中 */
-    nav {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
+    h2, h3 { margin-top: 0; color: #1a73e8; }
+    button {
+      background-color: #1a73e8;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    button:disabled { background-color: #ccc; }
+    .slider-group { margin-bottom: 15px; }
+    .slider-label {
       display: flex;
-      gap: 5px;
+      justify-content: space-between;
+      margin-bottom: 5px;
+      font-weight: bold;
     }
-    nav button { 
-      background: none; 
-      border: none; 
-      color: #aaa; 
-      font-size: 15px; 
-      cursor: pointer; 
-      padding: 8px 12px; 
-      border-radius: 6px; 
-      white-space: nowrap;
+    input[type=range] { width: 100%; height: 6px; }
+    .debug-info {
+      font-size: 12px;
+      color: #666;
+      background: #eef2f5;
+      padding: 8px;
+      border-radius: 4px;
+      margin-top: 10px;
     }
-    nav button.active { color: white; background-color: var(--primary); }
-
-    /* 右側操作按鈕區 */
-    .header-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .container { max-width: 900px; margin: 20px auto; padding: 0 15px; }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-    .card { background: var(--card-bg); border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-    .btn { background-color: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-    .btn-danger { background-color: #dc3545; }
-    .btn-secondary { background-color: var(--gray); }
-    .btn-success { background-color: #28a745; }
-    .slider { width: 100%; margin: 5px 0 2px 0; }
-    
-    /* 刻度標籤與按鈕樣式 */
-    .ticks { display: flex; justify-content: space-between; font-size: 11px; color: #666; margin-bottom: 8px; }
-    .tick-btn { cursor: pointer; padding: 2px 4px; border-radius: 3px; background: #eee; }
-    .tick-btn:hover { background: #007bff; color: white; }
-
-    .grid-pins { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 10px; }
-    .pin-box { border: 1px solid #ccc; padding: 10px; text-align: center; border-radius: 6px; background: #fff; }
-    .pin-box.active { border-color: var(--primary); }
-    .pin-box.disabled { background-color: var(--disabled); color: #aaa; border-color: #ddd; }
-    .pin-toggle-btn { margin-top: 6px; padding: 4px 8px; font-size: 12px; border-radius: 4px; cursor: pointer; border: 1px solid #ccc; background: #fff; }
-    .pin-name-input { width: 90%; padding: 4px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; margin-top: 6px; text-align: center; }
-
-    .group-detail { margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px; display: none; }
-    .weekday-selector label { margin-right: 8px; font-size: 14px; }
-    .schedule-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding: 10px 0; }
-    .device-status { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #ddd; }
-    .device-status.connected { background: #28a745; color: white; }
   </style>
 </head>
 <body>
 
-<header>
-  <h2>ESP32-C3 控制矩陣</h2>
-  
-  <nav>
-    <button class="active" onclick="switchTab(event, 'dashboard')">群組控制</button>
-    <button onclick="switchTab(event, 'bluetooth')">藍芽裝置</button>
-    <button onclick="switchTab(event, 'group-edit')">群組編輯</button>
-    <button onclick="switchTab(event, 'pins')">腳位管理</button>
-    <button onclick="switchTab(event, 'schedule')">排程設定</button>
-  </nav>
+  <h1>ESP32-C3 燈光控制面板</h1>
 
-  <div class="header-actions">
-    <button class="btn btn-success" style="font-size:12px;" onclick="exportConfig()">匯出設定檔</button>
-    <button class="btn btn-secondary" style="font-size:12px;" onclick="document.getElementById('importFile').click()">匯入設定檔</button>
-    <input type="file" id="importFile" style="display:none;" accept=".json" onchange="importConfig(event)">
-    <button class="btn btn-danger" style="font-size:12px;" onclick="clearSavedData()">清空所有紀錄</button>
-  </div>
-</header>
-
-<div class="container">
-
-  <!-- TAB 1: 群組控制頁面 -->
-  <div id="tab-dashboard" class="tab-content active">
-    <div class="card">
-      <h3>群組控制區</h3>
-      <div id="groupControlList"></div>
-    </div>
+  <!-- 藍芽連線狀態卡片 -->
+  <div class="card">
+    <h2>藍芽連線</h2>
+    <button id="connectBtn" onclick="connectBle()">搜尋並連線 ESP32</button>
+    <div id="statusText" style="text-align: center; font-weight: bold; color: #666;">狀態：未連線</div>
   </div>
 
-  <!-- TAB 2: 獨立藍芽裝置連線管理區 -->
-  <div id="tab-bluetooth" class="tab-content">
-    <div class="card">
-      <h3>藍芽裝置連線管理</h3>
-      <p style="color: #666; font-size: 14px;">在此配對新的 ESP32 裝置，或查看目前的連線狀態。</p>
-      <button class="btn" style="margin-top:10px;" onclick="connectBLE()">+ 配對新 ESP32 裝置</button>
-      <div id="deviceList" style="margin-top: 15px;"></div>
-    </div>
-  </div>
-
-  <!-- TAB 3: 群組編輯頁面 -->
-  <div id="tab-group-edit" class="tab-content">
-    <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3>群組管理與成員設定</h3>
-        <button class="btn" onclick="promptCreateGroup()">+ 新增群組</button>
-      </div>
-      <div id="groupEditList" style="margin-top: 15px;"></div>
-    </div>
-  </div>
-
-  <!-- TAB 4: 腳位管理 -->
-  <div id="tab-pins" class="tab-content">
-    <div class="card">
-      <h3>腳位編輯與隱藏設定</h3>
-      <p style="color: #666; font-size: 14px;">您可以在此處編輯腳位名稱，或將未使用的 GPIO 設為「停用/隱藏」。(變更會自動儲存)</p>
-      <div id="pinMaskContainer"></div>
-    </div>
-  </div>
-
-  <!-- TAB 5: 排程設定 -->
-  <div id="tab-schedule" class="tab-content">
-    <div class="card">
-      <h3>新增定時排程</h3>
-      <div style="display: grid; gap: 15px;">
-        <div>
-          <label>觸發時間：</label>
-          <input type="time" id="schedTime" value="08:20">
-        </div>
-        <div>
-          <label>重複星期：</label>
-          <div class="weekday-selector" id="weekdayBoxes">
-            <label><input type="checkbox" value="1"> 一</label>
-            <label><input type="checkbox" value="2"> 二</label>
-            <label><input type="checkbox" value="3"> 三</label>
-            <label><input type="checkbox" value="4"> 四</label>
-            <label><input type="checkbox" value="5"> 五</label>
-            <label><input type="checkbox" value="6"> 六</label>
-            <label><input type="checkbox" value="0"> 日</label>
-          </div>
-        </div>
-        <div>
-          <label>控制目標：</label>
-          <select id="schedTargetType" onchange="updateSchedTargetOptions()">
-            <option value="group">控制群組</option>
-            <option value="single">控制單燈 (特定裝置 GPIO)</option>
-          </select>
-          <select id="schedTargetSelect"></select>
-        </div>
-        <div>
-          <label>目標 PWM 亮度：</label>
-          <input type="range" min="0" max="255" value="128" id="schedPwmSlider" class="slider" oninput="updateSchedDisplay(this.value)">
-          <div class="ticks">
-            <span class="tick-btn" onclick="setSchedSlider(0)">0%</span>
-            <span class="tick-btn" onclick="setSchedSlider(64)">25%</span>
-            <span class="tick-btn" onclick="setSchedSlider(128)">50%</span>
-            <span class="tick-btn" onclick="setSchedSlider(191)">75%</span>
-            <span class="tick-btn" onclick="setSchedSlider(255)">100%</span>
-          </div>
-          <span id="schedPwmVal">50%</span>
-        </div>
-        <button class="btn" onclick="addSchedule()">儲存排程</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>已設定排程清單</h3>
-      <div id="scheduleList"></div>
-    </div>
-  </div>
-
-</div>
-
-<script>
-  const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-  const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-  const ALL_PINS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
-
-  let connectedDevices = {}; 
-  let groups = [];           
-  let schedules = [];        
-  let deviceConfigs = {};    
-  let lastExecutedMin = "";  
-
-  window.onload = function() {
-    loadLocalData();
-    renderGroupControl();
-    renderDevices();
-    alignScheduleTimer();
-  };
-
-  function saveLocalData() {
-    localStorage.setItem('esp32_groups', JSON.stringify(groups));
-    localStorage.setItem('esp32_schedules', JSON.stringify(schedules));
-    localStorage.setItem('esp32_deviceConfigs', JSON.stringify(deviceConfigs));
-  }
-
-  function loadLocalData() {
-    const savedGroups = localStorage.getItem('esp32_groups');
-    const savedSchedules = localStorage.getItem('esp32_schedules');
-    const savedConfigs = localStorage.getItem('esp32_deviceConfigs');
-
-    if (savedGroups) groups = JSON.parse(savedGroups);
-    if (savedSchedules) schedules = JSON.parse(savedSchedules);
-    if (savedConfigs) deviceConfigs = JSON.parse(savedConfigs);
-  }
-
-  function exportConfig() {
-    const data = { groups, schedules, deviceConfigs };
-    const jsonStr = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `esp32_config_${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function importConfig(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      try {
-        const data = JSON.parse(e.target.result);
-        if (data.groups && data.schedules && data.deviceConfigs) {
-          groups = data.groups;
-          schedules = data.schedules;
-          deviceConfigs = data.deviceConfigs;
-          saveLocalData();
-          alert("設定檔匯入成功！");
-          location.reload();
-        } else {
-          alert("格式不正確，無法讀取設定檔。");
-        }
-      } catch (err) {
-        alert("讀取檔案失敗：" + err);
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function clearSavedData() {
-    if (confirm("確定要清空所有已儲存的群組、腳位名稱與排程嗎？")) {
-      localStorage.clear();
-      groups = [];
-      schedules = [];
-      deviceConfigs = {};
-      location.reload();
-    }
-  }
-
-  function getPinDisplayName(devId, pin) {
-    const cfg = deviceConfigs[devId];
-    const devName = cfg ? cfg.name : '未知裝置';
-    if (cfg && cfg.pinNames && cfg.pinNames[pin] && cfg.pinNames[pin].trim() !== '') {
-      return cfg.pinNames[pin].trim();
-    }
-    return `${devName} - GPIO ${pin}`;
-  }
-
-  function getPercentStr(val) {
-    return Math.round((val / 255) * 100) + '%';
-  }
-
-  function switchTab(evt, tabName) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-    document.getElementById(`tab-${tabName}`).classList.add('active');
+  <!-- 雙色溫與功率控制卡片 (GPIO 0 & GPIO 1) -->
+  <div class="card">
+    <h3>雙色溫與功率控制</h3>
     
-    if (evt && evt.target) {
-      evt.target.classList.add('active');
-    }
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>冷色 (GPIO 0): <span id="coldPercentDisplay">50%</span></span>
+        <span>暖色 (GPIO 1): <span id="warmPercentDisplay">50%</span></span>
+      </div>
+      <input type="range" id="colorTempSlider" min="0" max="100" value="50" oninput="updateDualColorPwm()">
+    </div>
 
-    if (tabName === 'dashboard') renderGroupControl();
-    if (tabName === 'bluetooth') renderDevices();
-    if (tabName === 'group-edit') renderGroupEdit();
-    if (tabName === 'pins') renderPinMasking();
-    if (tabName === 'schedule') { updateSchedTargetOptions(); renderSchedules(); }
-  }
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>燈具總功率 (PWM 幅度)</span>
+        <span id="powerPercentDisplay">100%</span>
+      </div>
+      <input type="range" id="powerSlider" min="0" max="100" value="100" oninput="updateDualColorPwm()">
+    </div>
 
-  async function connectBLE() {
-    try {
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [SERVICE_UUID]
-      });
+    <div class="debug-info">
+      實際 PWM 輸出 ➔ GPIO 0: <span id="pwm0Value">128</span> | GPIO 1: <span id="pwm1Value">128</span>
+    </div>
+  </div>
 
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(SERVICE_UUID);
-      const rxChar = await service.getCharacteristic(CHARACTERISTIC_UUID_RX);
+  <!-- 單燈控制卡片 (GPIO 2 ~ 10, 20, 21) -->
+  <div class="card">
+    <h3>單燈獨立控制 (GPIO 2 ~ 21)</h3>
+    <div id="otherPinsContainer"></div>
+  </div>
 
-      const deviceId = device.id;
+  <script>
+    // BLE UUID
+    const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
-      if (!deviceConfigs[deviceId]) {
-        deviceConfigs[deviceId] = {
-          name: device.name || `ESP32_${deviceId.substr(0,4)}`,
-          disabledPins: [],
-          pinNames: {}
-        };
-        saveLocalData();
+    let bleDevice = null;
+    let rxCharacteristic = null;
+
+    // 剩餘可獨立控制的 GPIO 腳位
+    const OTHER_PINS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
+
+    // 動態產生其它 GPIO 的控制拉桿
+    const container = document.getElementById('otherPinsContainer');
+    OTHER_PINS.forEach(pin => {
+      const div = document.createElement('div');
+      div.className = 'slider-group';
+      div.innerHTML = `
+        <div class="slider-label">
+          <span>GPIO ${pin} 亮度</span>
+          <span id="display-pin-${pin}">0%</span>
+        </div>
+        <input type="range" min="0" max="255" value="0" oninput="onSinglePinChange(${pin}, this.value)">
+      `;
+      container.appendChild(div);
+    });
+
+    // 1. 藍芽連線邏輯
+    async function connectBle() {
+      try {
+        document.getElementById('statusText').innerText = "搜尋裝置中...";
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'ESP32C3_Matrix' }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        rxCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID_RX);
+
+        document.getElementById('statusText').innerText = "狀態：已連線至 ESP32C3_Matrix";
+        document.getElementById('statusText').style.color = "green";
+        document.getElementById('connectBtn').innerText = "藍芽已連線";
+        document.getElementById('connectBtn').disabled = true;
+
+      } catch (error) {
+        console.error("BLE 連線失敗:", error);
+        document.getElementById('statusText').innerText = "連線失敗: " + error.message;
+        document.getElementById('statusText').style.color = "red";
       }
-
-      connectedDevices[deviceId] = {
-        id: deviceId,
-        name: deviceConfigs[deviceId].name,
-        gatt: server,
-        rxChar: rxChar
-      };
-
-      device.addEventListener('gattserverdisconnected', () => {
-        alert(`裝置 [${connectedDevices[deviceId].name}] 已斷開連線`);
-        delete connectedDevices[deviceId];
-        renderDevices();
-      });
-
-      renderDevices();
-      alert(`成功連線至 ${connectedDevices[deviceId].name}`);
-    } catch (err) {
-      alert("連線失敗：" + err);
     }
-  }
 
-  // 發送單一字串指令 (可以是一組 1,255 或一串 1,255,2,128,3,0)
-  async function sendRawCommand(deviceId, cmdString) {
-    const dev = connectedDevices[deviceId];
-    if (dev && dev.rxChar) {
+    // 2. 底層藍芽發送函式
+    async function sendBleCommand(payload) {
+      if (!rxCharacteristic) return;
       try {
         const encoder = new TextEncoder();
-        await dev.rxChar.writeValue(encoder.encode(cmdString));
-      } catch (e) {
-        console.error("發送失敗:", e);
+        await rxCharacteristic.writeValue(encoder.encode(payload));
+        console.log("已發送至 ESP32:", payload);
+      } catch (err) {
+        console.error("發送失敗:", err);
       }
     }
-  }
 
-  function sendPwmCommand(deviceId, pin, val) {
-    sendRawCommand(deviceId, `${pin},${val}`);
-  }
+    // 3. 雙色溫 + 總功率動態計算
+    function updateDualColorPwm() {
+      const tempVal = parseFloat(document.getElementById('colorTempSlider').value) / 100;
+      const powerVal = parseFloat(document.getElementById('powerSlider').value) / 100;
 
-  function renderDevices() {
-    const container = document.getElementById('deviceList');
-    container.innerHTML = Object.keys(connectedDevices).length === 0 ? '<p style="color:#888">尚未連線任何藍芽裝置。</p>' : '';
-    
-    Object.values(connectedDevices).forEach(dev => {
-      container.innerHTML += `
-        <div style="margin-bottom:8px;">
-          <strong>${dev.name}</strong> 
-          <span class="device-status ${dev.gatt && dev.gatt.connected ? 'connected' : ''}">
-            ${dev.gatt && dev.gatt.connected ? '已連線' : '已斷開'}
-          </span>
-        </div>`;
-    });
-  }
+      const coldRatio = 1.0 - tempVal;
+      const warmRatio = tempVal;
 
-  function renderGroupControl() {
-    const container = document.getElementById('groupControlList');
-    container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請至「群組編輯」頁面建立。</p>' : '';
+      const pwm0 = Math.round(255 * coldRatio * powerVal);
+      const pwm1 = Math.round(255 * warmRatio * powerVal);
 
-    groups.forEach(grp => {
-      let singleControlsHtml = grp.members.map(m => {
-        const pinLabel = getPinDisplayName(m.deviceId, m.pin);
+      // 更新畫面顯示
+      document.getElementById('coldPercentDisplay').innerText = `${Math.round(coldRatio * 100)}%`;
+      document.getElementById('warmPercentDisplay').innerText = `${Math.round(warmRatio * 100)}%`;
+      document.getElementById('powerPercentDisplay').innerText = `${Math.round(powerVal * 100)}%`;
+      document.getElementById('pwm0Value').innerText = pwm0;
+      document.getElementById('pwm1Value').innerText = pwm1;
 
-        return `
-          <div style="margin: 12px 0; background: #f8f9fa; padding: 10px; border-radius: 6px;">
-            <div style="display:flex; justify-content:space-between;">
-              <span style="font-weight:bold; font-size:14px;">${pinLabel}</span>
-              <span id="val-${grp.id}-${m.deviceId}-${m.pin}">0%</span>
-            </div>
-            <input type="range" min="0" max="255" value="0" 
-                   id="slider-${grp.id}-${m.deviceId}-${m.pin}" class="slider" 
-                   oninput="
-                     sendPwmCommand('${m.deviceId}', ${m.pin}, this.value);
-                     document.getElementById('val-${grp.id}-${m.deviceId}-${m.pin}').innerText = getPercentStr(this.value);
-                   ">
-            <div class="ticks">
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 0)">0%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 64)">25%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 128)">50%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 191)">75%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 255)">100%</span>
-            </div>
-          </div>`;
-      }).join('');
-
-      container.innerHTML += `
-        <div class="card" style="border: 1px solid #e0e0e0;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <h4>${grp.name}</h4>
-            <span id="grp-val-${grp.id}" style="font-weight:bold; color:var(--primary);">0%</span>
-          </div>
-          
-          <label style="font-weight:bold;">群組總量同步調整：</label>
-          <input type="range" min="0" max="255" value="0" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value)">
-          <div class="ticks">
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 64)">25%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 128)">50%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 191)">75%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 255)">100%</span>
-          </div>
-
-          <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具 ▼</button>
-          
-          <div id="detail-${grp.id}" class="group-detail">
-            <p style="font-size:12px; color:#666;">（此處調整只會改動該燈具，不會動到上面與其他燈）</p>
-            ${singleControlsHtml || '<p style="color:#888">此群組尚未添加任何燈具成員。</p>'}
-          </div>
-        </div>`;
-    });
-  }
-
-  // 修改：將屬於同一台 ESP32 的腳位整合為一串指令打包發送 (例如: "1,255,2,255,3,255")
-  function setGroupPwm(groupId, val) {
-    const grp = groups.find(g => g.id === groupId);
-    if (!grp) return;
-
-    document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
-
-    // 1. 將成員依裝置分類
-    let deviceMap = {};
-    grp.members.forEach(m => {
-      if (!deviceMap[m.deviceId]) deviceMap[m.deviceId] = [];
-      deviceMap[m.deviceId].push(m.pin);
-
-      // UI 更新
-      const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
-      const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
-      if (subSlider) subSlider.value = val;
-      if (valSpan) valSpan.innerText = getPercentStr(val);
-    });
-
-    // 2. 針對每台裝置打包指令並一口氣發送
-    Object.keys(deviceMap).forEach(deviceId => {
-      const pins = deviceMap[deviceId];
-      const cmdParts = pins.map(pin => `${pin},${val}`);
-      const fullCmd = cmdParts.join(','); // 組合結果範例："1,255,2,255,3,255"
-      sendRawCommand(deviceId, fullCmd);
-    });
-  }
-
-  function setMasterGroupSlider(groupId, val) {
-    const slider = document.getElementById(`grp-master-slider-${groupId}`);
-    if (slider) {
-      slider.value = val;
-      setGroupPwm(groupId, val);
-    }
-  }
-
-  function setSingleSlider(groupId, deviceId, pin, val) {
-    const slider = document.getElementById(`slider-${groupId}-${deviceId}-${pin}`);
-    if (slider) {
-      slider.value = val;
-      sendPwmCommand(deviceId, pin, val);
-      document.getElementById(`val-${groupId}-${deviceId}-${pin}`).innerText = getPercentStr(val);
-    }
-  }
-
-  function toggleGroupDetail(groupId) {
-    const el = document.getElementById(`detail-${groupId}`);
-    el.style.display = el.style.display === 'block' ? 'none' : 'block';
-  }
-
-  function renderGroupEdit() {
-    const container = document.getElementById('groupEditList');
-    container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請點擊上方按鈕建立。</p>' : '';
-
-    groups.forEach(grp => {
-      let memberOptionsHtml = '';
-      Object.keys(deviceConfigs).forEach(devId => {
-        const devCfg = deviceConfigs[devId];
-        ALL_PINS.forEach(pin => {
-          if (!devCfg.disabledPins.includes(pin)) {
-            const isChecked = grp.members.some(m => m.deviceId === devId && m.pin === pin);
-            const pinLabel = getPinDisplayName(devId, pin);
-
-            memberOptionsHtml += `
-              <label style="margin-right:12px; display:inline-block; margin-bottom:8px; font-size:14px;">
-                <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleGroupMember('${grp.id}', '${devId}', ${pin}, this.checked)">
-                ${pinLabel}
-              </label>`;
-          }
-        });
-      });
-
-      container.innerHTML += `
-        <div class="card" style="border: 1px solid #ddd;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <h4>${grp.name}</h4>
-            <button class="btn btn-danger" style="padding:4px 8px;" onclick="deleteGroup('${grp.id}')">刪除群組</button>
-          </div>
-          
-          <h5 style="margin-top:10px;">勾選隸屬於此群組的燈具：</h5>
-          <div style="margin-top:8px;">${memberOptionsHtml || '目前無可用的燈具腳位'}</div>
-        </div>`;
-    });
-  }
-
-  function promptCreateGroup() {
-    const name = prompt("請輸入新群組名稱：", "辦公區燈光");
-    if (!name) return;
-    
-    groups.push({
-      id: 'grp_' + Date.now(),
-      name: name,
-      members: []
-    });
-    saveLocalData();
-    renderGroupEdit();
-  }
-
-  function toggleGroupMember(groupId, deviceId, pin, isChecked) {
-    const grp = groups.find(g => g.id === groupId);
-    if (!grp) return;
-
-    if (isChecked) {
-      grp.members.push({ deviceId, pin });
-    } else {
-      grp.members = grp.members.filter(m => !(m.deviceId === deviceId && m.pin === pin));
-    }
-    saveLocalData();
-  }
-
-  function deleteGroup(groupId) {
-    groups = groups.filter(g => g.id !== groupId);
-    saveLocalData();
-    renderGroupEdit();
-  }
-
-  function renderPinMasking() {
-    const container = document.getElementById('pinMaskContainer');
-    const devIds = Object.keys(deviceConfigs);
-    container.innerHTML = devIds.length === 0 ? '<p style="color:#888">尚無裝置紀錄，請先配對藍芽裝置或匯入設定檔。</p>' : '';
-
-    devIds.forEach(devId => {
-      const devCfg = deviceConfigs[devId];
-      let pinsHtml = ALL_PINS.map(pin => {
-        const isDisabled = devCfg.disabledPins.includes(pin);
-        const currentName = (devCfg.pinNames && devCfg.pinNames[pin]) ? devCfg.pinNames[pin] : '';
-
-        return `
-          <div class="pin-box ${isDisabled ? 'disabled' : 'active'}">
-            <strong>GPIO ${pin}</strong><br>
-            <input type="text" class="pin-name-input" placeholder="自訂名稱" 
-                   value="${currentName}" 
-                   onchange="updatePinName('${devId}', ${pin}, this.value)">
-            <button class="pin-toggle-btn" onclick="togglePinMask('${devId}', ${pin})">
-              ${isDisabled ? '啟用腳位' : '停用/隱藏'}
-            </button>
-          </div>`;
-      }).join('');
-
-      container.innerHTML += `
-        <div style="margin-bottom:20px;">
-          <h4>${devCfg.name}</h4>
-          <div class="grid-pins">${pinsHtml}</div>
-        </div>`;
-    });
-  }
-
-  function updatePinName(deviceId, pin, name) {
-    if (deviceConfigs[deviceId]) {
-      if (!deviceConfigs[deviceId].pinNames) deviceConfigs[deviceId].pinNames = {};
-      deviceConfigs[deviceId].pinNames[pin] = name.trim();
-      saveLocalData();
-    }
-  }
-
-  function togglePinMask(deviceId, pin) {
-    const cfg = deviceConfigs[deviceId];
-    if (!cfg) return;
-
-    const idx = cfg.disabledPins.indexOf(pin);
-    if (idx > -1) {
-      cfg.disabledPins.splice(idx, 1);
-    } else {
-      cfg.disabledPins.push(pin);
-    }
-    saveLocalData();
-    renderPinMasking();
-  }
-
-  function updateSchedDisplay(val) {
-    document.getElementById('schedPwmVal').innerText = getPercentStr(val);
-  }
-
-  function setSchedSlider(val) {
-    document.getElementById('schedPwmSlider').value = val;
-    updateSchedDisplay(val);
-  }
-
-  function updateSchedTargetOptions() {
-    const type = document.getElementById('schedTargetType').value;
-    const select = document.getElementById('schedTargetSelect');
-    select.innerHTML = '';
-
-    if (type === 'group') {
-      groups.forEach(g => {
-        select.innerHTML += `<option value="${g.id}">群組：${g.name}</option>`;
-      });
-    } else {
-      Object.keys(deviceConfigs).forEach(devId => {
-        const devCfg = deviceConfigs[devId];
-        ALL_PINS.forEach(pin => {
-          if (!devCfg.disabledPins.includes(pin)) {
-            const pinLabel = getPinDisplayName(devId, pin);
-            select.innerHTML += `<option value="${devId}|${pin}">${pinLabel}</option>`;
-          }
-        });
-      });
-    }
-  }
-
-  function addSchedule() {
-    const time = document.getElementById('schedTime').value;
-    const checkedDays = Array.from(document.querySelectorAll('#weekdayBoxes input:checked')).map(cb => parseInt(cb.value));
-    const targetType = document.getElementById('schedTargetType').value;
-    const targetVal = document.getElementById('schedTargetSelect').value;
-    const pwmVal = document.getElementById('schedPwmSlider').value;
-
-    if (checkedDays.length === 0) {
-      alert("請至少選擇一個重複星期！");
-      return;
+      // 一次發送 GPIO 0 與 GPIO 1 的 PWM
+      sendBleCommand(`0,${pwm0},1,${pwm1}`);
     }
 
-    schedules.push({
-      id: 'sch_' + Date.now(),
-      time,
-      days: checkedDays,
-      targetType,
-      targetVal,
-      pwmVal
-    });
-
-    saveLocalData();
-    renderSchedules();
-    alert("排程已成功儲存！");
-  }
-
-  function renderSchedules() {
-    const container = document.getElementById('scheduleList');
-    const dayNames = ["日", "一", "二", "三", "四", "五", "六"];
-    container.innerHTML = schedules.length === 0 ? '<p style="color:#888">目前無排程設定。</p>' : '';
-
-    schedules.forEach(sch => {
-      const daysText = sch.days.map(d => dayNames[d]).join(', ');
-      let targetText = '';
-      if (sch.targetType === 'group') {
-        const g = groups.find(x => x.id === sch.targetVal);
-        targetText = `群組：${g ? g.name : '已刪除群組'}`;
-      } else {
-        const [devId, pin] = sch.targetVal.split('|');
-        const pinLabel = getPinDisplayName(devId, pin);
-        targetText = `單燈：${pinLabel}`;
-      }
-
-      container.innerHTML += `
-        <div class="schedule-item">
-          <div>
-            <strong>[${sch.time}]</strong> - ${targetText} ➔ PWM: ${getPercentStr(sch.pwmVal)}<br>
-            <small style="color:#666;">重複星期：${daysText}</small>
-          </div>
-          <button class="btn btn-danger" onclick="deleteSchedule('${sch.id}')">刪除</button>
-        </div>`;
-    });
-  }
-
-  function deleteSchedule(schId) {
-    schedules = schedules.filter(s => s.id !== schId);
-    saveLocalData();
-    renderSchedules();
-  }
-
-  function checkSchedules() {
-    const now = new Date();
-    const currentDay = now.getDay();
-    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const minuteStamp = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()} ${currentTime}`;
-
-    if (lastExecutedMin === minuteStamp) return;
-    lastExecutedMin = minuteStamp;
-
-    schedules.forEach(sch => {
-      if (sch.time === currentTime && sch.days.includes(currentDay)) {
-        if (sch.targetType === 'group') {
-          setGroupPwm(sch.targetVal, sch.pwmVal);
-        } else {
-          const [devId, pin] = sch.targetVal.split('|');
-          sendPwmCommand(devId, pin, sch.pwmVal);
-        }
-      }
-    });
-  }
-
-  function alignScheduleTimer() {
-    checkSchedules();
-    const now = new Date();
-    const delay = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
-    
-    setTimeout(() => {
-      checkSchedules();
-      setInterval(checkSchedules, 60000);
-    }, delay);
-  }
-</script>
+    // 4. 單燈控制發送
+    function onSinglePinChange(pin, val) {
+      const percent = Math.round((val / 255) * 100);
+      document.getElementById(`display-pin-${pin}`).innerText = `${percent}%`;
+      sendBleCommand(`${pin},${val}`);
+    }
+  </script>
 
 </body>
 </html>
