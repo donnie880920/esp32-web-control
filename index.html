@@ -89,11 +89,11 @@
   
   <!-- 頁面切換選單 (置中) -->
   <nav>
-    <button class="active" onclick="switchTab('dashboard')">群組控制</button>
-    <button onclick="switchTab('bluetooth')">藍芽裝置</button>
-    <button onclick="switchTab('group-edit')">群組編輯</button>
-    <button onclick="switchTab('pins')">腳位管理</button>
-    <button onclick="switchTab('schedule')">排程設定</button>
+    <button class="active" onclick="switchTab(event, 'dashboard')">群組控制</button>
+    <button onclick="switchTab(event, 'bluetooth')">藍芽裝置</button>
+    <button onclick="switchTab(event, 'group-edit')">群組編輯</button>
+    <button onclick="switchTab(event, 'pins')">腳位管理</button>
+    <button onclick="switchTab(event, 'schedule')">排程設定</button>
   </nav>
 
   <!-- 系統操作按鈕區 (最右側) -->
@@ -207,11 +207,13 @@
   let groups = [];           
   let schedules = [];        
   let deviceConfigs = {};    
+  let lastExecutedMin = "";  // 記錄上次執行的時間點，避免同分鐘重複觸發
 
   window.onload = function() {
     loadLocalData();
     renderGroupControl();
     renderDevices();
+    alignScheduleTimer();
   };
 
   function saveLocalData() {
@@ -298,11 +300,14 @@
   }
 
   // 1. 分頁切換
-  function switchTab(tabName) {
+  function switchTab(evt, tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tabName}`).classList.add('active');
-    event.target.classList.add('active');
+    
+    if (evt && evt.target) {
+      evt.target.classList.add('active');
+    }
 
     if (tabName === 'dashboard') renderGroupControl();
     if (tabName === 'bluetooth') renderDevices();
@@ -689,11 +694,15 @@
     renderSchedules();
   }
 
-  // 排程計時器
-  setInterval(() => {
+  // 排程執行檢查機制
+  function checkSchedules() {
     const now = new Date();
     const currentDay = now.getDay();
     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const minuteStamp = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()} ${currentTime}`;
+
+    if (lastExecutedMin === minuteStamp) return; // 避免同一分鐘重複觸發
+    lastExecutedMin = minuteStamp;
 
     schedules.forEach(sch => {
       if (sch.time === currentTime && sch.days.includes(currentDay)) {
@@ -705,7 +714,19 @@
         }
       }
     });
-  }, 30000);
+  }
+
+  // 校準計時器：對齊到每分鐘的 00 秒開始循環執行
+  function alignScheduleTimer() {
+    checkSchedules();
+    const now = new Date();
+    const delay = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+    
+    setTimeout(() => {
+      checkSchedules();
+      setInterval(checkSchedules, 60000);
+    }, delay);
+  }
 </script>
 
 </body>
