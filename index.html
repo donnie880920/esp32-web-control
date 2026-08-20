@@ -87,7 +87,6 @@
 <header>
   <h2>ESP32-C3 控制矩陣</h2>
   
-  <!-- 頁面切換選單 (置中) -->
   <nav>
     <button class="active" onclick="switchTab(event, 'dashboard')">群組控制</button>
     <button onclick="switchTab(event, 'bluetooth')">藍芽裝置</button>
@@ -96,7 +95,6 @@
     <button onclick="switchTab(event, 'schedule')">排程設定</button>
   </nav>
 
-  <!-- 系統操作按鈕區 (最右側) -->
   <div class="header-actions">
     <button class="btn btn-success" style="font-size:12px;" onclick="exportConfig()">匯出設定檔</button>
     <button class="btn btn-secondary" style="font-size:12px;" onclick="document.getElementById('importFile').click()">匯入設定檔</button>
@@ -207,7 +205,7 @@
   let groups = [];           
   let schedules = [];        
   let deviceConfigs = {};    
-  let lastExecutedMin = "";  // 記錄上次執行的時間點，避免同分鐘重複觸發
+  let lastExecutedMin = "";  
 
   window.onload = function() {
     loadLocalData();
@@ -232,13 +230,8 @@
     if (savedConfigs) deviceConfigs = JSON.parse(savedConfigs);
   }
 
-  // 匯出設定檔 (.json)
   function exportConfig() {
-    const data = {
-      groups,
-      schedules,
-      deviceConfigs
-    };
+    const data = { groups, schedules, deviceConfigs };
     const jsonStr = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -249,7 +242,6 @@
     URL.revokeObjectURL(url);
   }
 
-  // 匯入設定檔 (.json)
   function importConfig(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -285,7 +277,6 @@
     }
   }
 
-  // 若有名稱則僅顯示自訂名稱；若無自訂名稱才顯示「裝置名稱 - GPIO X」
   function getPinDisplayName(devId, pin) {
     const cfg = deviceConfigs[devId];
     const devName = cfg ? cfg.name : '未知裝置';
@@ -299,7 +290,6 @@
     return Math.round((val / 255) * 100) + '%';
   }
 
-  // 1. 分頁切換
   function switchTab(evt, tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
@@ -316,7 +306,6 @@
     if (tabName === 'schedule') { updateSchedTargetOptions(); renderSchedules(); }
   }
 
-  // 2. Web Bluetooth 連線
   async function connectBLE() {
     try {
       const device = await navigator.bluetooth.requestDevice({
@@ -359,16 +348,21 @@
     }
   }
 
-  async function sendPwmCommand(deviceId, pin, val) {
+  // 發送單一字串指令 (可以是一組 1,255 或一串 1,255,2,128,3,0)
+  async function sendRawCommand(deviceId, cmdString) {
     const dev = connectedDevices[deviceId];
     if (dev && dev.rxChar) {
       try {
         const encoder = new TextEncoder();
-        await dev.rxChar.writeValue(encoder.encode(`${pin},${val}`));
+        await dev.rxChar.writeValue(encoder.encode(cmdString));
       } catch (e) {
         console.error("發送失敗:", e);
       }
     }
+  }
+
+  function sendPwmCommand(deviceId, pin, val) {
+    sendRawCommand(deviceId, `${pin},${val}`);
   }
 
   function renderDevices() {
@@ -386,7 +380,6 @@
     });
   }
 
-  // 3. 群組控制頁面渲染 (已將數值顯示改為僅保留百分比)
   function renderGroupControl() {
     const container = document.getElementById('groupControlList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請至「群組編輯」頁面建立。</p>' : '';
@@ -444,19 +437,33 @@
     });
   }
 
+  // 修改：將屬於同一台 ESP32 的腳位整合為一串指令打包發送 (例如: "1,255,2,255,3,255")
   function setGroupPwm(groupId, val) {
     const grp = groups.find(g => g.id === groupId);
-    if (grp) {
-      document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
-      grp.members.forEach(m => {
-        sendPwmCommand(m.deviceId, m.pin, val);
-        
-        const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
-        const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
-        if (subSlider) subSlider.value = val;
-        if (valSpan) valSpan.innerText = getPercentStr(val);
-      });
-    }
+    if (!grp) return;
+
+    document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
+
+    // 1. 將成員依裝置分類
+    let deviceMap = {};
+    grp.members.forEach(m => {
+      if (!deviceMap[m.deviceId]) deviceMap[m.deviceId] = [];
+      deviceMap[m.deviceId].push(m.pin);
+
+      // UI 更新
+      const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
+      const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
+      if (subSlider) subSlider.value = val;
+      if (valSpan) valSpan.innerText = getPercentStr(val);
+    });
+
+    // 2. 針對每台裝置打包指令並一口氣發送
+    Object.keys(deviceMap).forEach(deviceId => {
+      const pins = deviceMap[deviceId];
+      const cmdParts = pins.map(pin => `${pin},${val}`);
+      const fullCmd = cmdParts.join(','); // 組合結果範例："1,255,2,255,3,255"
+      sendRawCommand(deviceId, fullCmd);
+    });
   }
 
   function setMasterGroupSlider(groupId, val) {
@@ -481,7 +488,6 @@
     el.style.display = el.style.display === 'block' ? 'none' : 'block';
   }
 
-  // 4. 群組編輯頁面
   function renderGroupEdit() {
     const container = document.getElementById('groupEditList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請點擊上方按鈕建立。</p>' : '';
@@ -548,7 +554,6 @@
     renderGroupEdit();
   }
 
-  // 5. 腳位名稱編輯與隱藏設定
   function renderPinMasking() {
     const container = document.getElementById('pinMaskContainer');
     const devIds = Object.keys(deviceConfigs);
@@ -602,7 +607,6 @@
     renderPinMasking();
   }
 
-  // 6. 排程邏輯
   function updateSchedDisplay(val) {
     document.getElementById('schedPwmVal').innerText = getPercentStr(val);
   }
@@ -694,14 +698,13 @@
     renderSchedules();
   }
 
-  // 排程執行檢查機制
   function checkSchedules() {
     const now = new Date();
     const currentDay = now.getDay();
     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const minuteStamp = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()} ${currentTime}`;
 
-    if (lastExecutedMin === minuteStamp) return; // 避免同一分鐘重複觸發
+    if (lastExecutedMin === minuteStamp) return;
     lastExecutedMin = minuteStamp;
 
     schedules.forEach(sch => {
@@ -716,7 +719,6 @@
     });
   }
 
-  // 校準計時器：對齊到每分鐘的 00 秒開始循環執行
   function alignScheduleTimer() {
     checkSchedules();
     const now = new Date();
