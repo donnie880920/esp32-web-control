@@ -1,9 +1,10 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ESP32-C3 多裝置藍芽 PWM 矩陣控制系統</title>
-  <title>ESP32-C3 藍芽 13-Pin PWM 控制器</title>
-<style>
+  <style>
     :root {
       --primary: #007bff;
       --bg: #f4f6f9;
@@ -48,51 +49,9 @@
 
     /* 右側操作按鈕區 */
     .header-actions {
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      max-width: 600px;
-      margin: 20px auto;
-      padding: 0 15px;
-      background-color: #f8f9fa;
-      color: #333;
-    }
-    .card {
-      background: white;
-      border-radius: 10px;
-      padding: 20px;
-      margin-bottom: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    }
-    h2, h3 { margin-top: 0; color: #1a73e8; }
-    button {
-      background-color: #1a73e8;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      font-size: 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      width: 100%;
-      margin-bottom: 10px;
-    }
-    button:disabled { background-color: #ccc; }
-    .slider-group { margin-bottom: 15px; }
-    .slider-label {
-display: flex;
+      display: flex;
       gap: 8px;
-      justify-content: space-between;
-      margin-bottom: 5px;
-      font-weight: bold;
     }
-    input[type=range] { width: 100%; height: 6px; }
-    .debug-info {
-      font-size: 12px;
-      color: #666;
-      background: #eef2f5;
-      padding: 8px;
-      border-radius: 4px;
-      margin-top: 10px;
-}
 
     .container { max-width: 900px; margin: 20px auto; padding: 0 15px; }
     .tab-content { display: none; }
@@ -121,7 +80,9 @@ display: flex;
     .schedule-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding: 10px 0; }
     .device-status { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #ddd; }
     .device-status.connected { background: #28a745; color: white; }
-</style>
+
+    .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 10px; margin: 10px 0; }
+  </style>
 </head>
 <body>
 
@@ -129,11 +90,11 @@ display: flex;
   <h2>ESP32-C3 控制矩陣</h2>
   
   <nav>
-    <button class="active" onclick="switchTab(event, 'dashboard')">群組控制</button>
-    <button onclick="switchTab(event, 'bluetooth')">藍芽裝置</button>
-    <button onclick="switchTab(event, 'group-edit')">群組編輯</button>
-    <button onclick="switchTab(event, 'pins')">腳位管理</button>
-    <button onclick="switchTab(event, 'schedule')">排程設定</button>
+    <button class="active" onclick="switchTab('dashboard')">群組控制</button>
+    <button onclick="switchTab('bluetooth')">藍芽裝置</button>
+    <button onclick="switchTab('group-edit')">群組編輯</button>
+    <button onclick="switchTab('pins')">腳位管理</button>
+    <button onclick="switchTab('schedule')">排程設定</button>
   </nav>
 
   <div class="header-actions">
@@ -145,9 +106,7 @@ display: flex;
 </header>
 
 <div class="container">
-  <h1>ESP32-C3 燈光控制面板</h1>
 
-  <!-- TAB 1: 群組控制頁面 -->
   <div id="tab-dashboard" class="tab-content active">
     <div class="card">
       <h3>群組控制區</h3>
@@ -155,7 +114,6 @@ display: flex;
     </div>
   </div>
 
-  <!-- TAB 2: 獨立藍芽裝置連線管理區 -->
   <div id="tab-bluetooth" class="tab-content">
     <div class="card">
       <h3>藍芽裝置連線管理</h3>
@@ -163,34 +121,18 @@ display: flex;
       <button class="btn" style="margin-top:10px;" onclick="connectBLE()">+ 配對新 ESP32 裝置</button>
       <div id="deviceList" style="margin-top: 15px;"></div>
     </div>
-  <!-- 藍芽連線狀態卡片 -->
-  <div class="card">
-    <h2>藍芽連線</h2>
-    <button id="connectBtn" onclick="connectBle()">搜尋並連線 ESP32</button>
-    <div id="statusText" style="text-align: center; font-weight: bold; color: #666;">狀態：未連線</div>
-</div>
+  </div>
 
-  <!-- TAB 3: 群組編輯頁面 -->
   <div id="tab-group-edit" class="tab-content">
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <h3>群組管理與成員設定</h3>
         <button class="btn" onclick="promptCreateGroup()">+ 新增群組</button>
-  <!-- 雙色溫與功率控制卡片 (GPIO 0 & GPIO 1) -->
-  <div class="card">
-    <h3>雙色溫與功率控制</h3>
-    
-    <div class="slider-group">
-      <div class="slider-label">
-        <span>冷色 (GPIO 0): <span id="coldPercentDisplay">50%</span></span>
-        <span>暖色 (GPIO 1): <span id="warmPercentDisplay">50%</span></span>
-</div>
+      </div>
       <div id="groupEditList" style="margin-top: 15px;"></div>
-      <input type="range" id="colorTempSlider" min="0" max="100" value="50" oninput="updateDualColorPwm()">
-</div>
+    </div>
   </div>
 
-  <!-- TAB 4: 腳位管理 -->
   <div id="tab-pins" class="tab-content">
     <div class="card">
       <h3>腳位編輯與隱藏設定</h3>
@@ -199,7 +141,6 @@ display: flex;
     </div>
   </div>
 
-  <!-- TAB 5: 排程設定 -->
   <div id="tab-schedule" class="tab-content">
     <div class="card">
       <h3>新增定時排程</h3>
@@ -241,21 +182,14 @@ display: flex;
           <span id="schedPwmVal">50%</span>
         </div>
         <button class="btn" onclick="addSchedule()">儲存排程</button>
-    <div class="slider-group">
-      <div class="slider-label">
-        <span>燈具總功率 (PWM 幅度)</span>
-        <span id="powerPercentDisplay">100%</span>
-</div>
-      <input type="range" id="powerSlider" min="0" max="100" value="100" oninput="updateDualColorPwm()">
-</div>
+      </div>
+    </div>
 
     <div class="card">
       <h3>已設定排程清單</h3>
       <div id="scheduleList"></div>
-    <div class="debug-info">
-      實際 PWM 輸出 ➔ GPIO 0: <span id="pwm0Value">128</span> | GPIO 1: <span id="pwm1Value">128</span>
-</div>
-</div>
+    </div>
+  </div>
 
 </div>
 
@@ -268,13 +202,11 @@ display: flex;
   let groups = [];           
   let schedules = [];        
   let deviceConfigs = {};    
-  let lastExecutedMin = "";  
 
   window.onload = function() {
     loadLocalData();
     renderGroupControl();
     renderDevices();
-    alignScheduleTimer();
   };
 
   function saveLocalData() {
@@ -304,46 +236,14 @@ display: flex;
     a.click();
     URL.revokeObjectURL(url);
   }
-  <!-- 單燈控制卡片 (GPIO 2 ~ 10, 20, 21) -->
-  <div class="card">
-    <h3>單燈獨立控制 (GPIO 2 ~ 21)</h3>
-    <div id="otherPinsContainer"></div>
-  </div>
 
   function importConfig(event) {
     const file = event.target.files[0];
     if (!file) return;
-  <script>
-    // BLE UUID
-    const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-    const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-
-    let bleDevice = null;
-    let rxCharacteristic = null;
-
-    // 剩餘可獨立控制的 GPIO 腳位
-    const OTHER_PINS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
-
-    // 動態產生其它 GPIO 的控制拉桿
-    const container = document.getElementById('otherPinsContainer');
-    OTHER_PINS.forEach(pin => {
-      const div = document.createElement('div');
-      div.className = 'slider-group';
-      div.innerHTML = `
-        <div class="slider-label">
-          <span>GPIO ${pin} 亮度</span>
-          <span id="display-pin-${pin}">0%</span>
-        </div>
-        <input type="range" min="0" max="255" value="0" oninput="onSinglePinChange(${pin}, this.value)">
-      `;
-      container.appendChild(div);
-    });
 
     const reader = new FileReader();
     reader.onload = function(e) {
-    // 1. 藍芽連線邏輯
-    async function connectBle() {
-try {
+      try {
         const data = JSON.parse(e.target.result);
         if (data.groups && data.schedules && data.deviceConfigs) {
           groups = data.groups;
@@ -385,14 +285,11 @@ try {
     return Math.round((val / 255) * 100) + '%';
   }
 
-  function switchTab(evt, tabName) {
+  function switchTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tabName}`).classList.add('active');
-    
-    if (evt && evt.target) {
-      evt.target.classList.add('active');
-    }
+    event.target.classList.add('active');
 
     if (tabName === 'dashboard') renderGroupControl();
     if (tabName === 'bluetooth') renderDevices();
@@ -407,24 +304,12 @@ try {
         acceptAllDevices: true,
         optionalServices: [SERVICE_UUID]
       });
-        document.getElementById('statusText').innerText = "搜尋裝置中...";
-        bleDevice = await navigator.bluetooth.requestDevice({
-          filters: [{ name: 'ESP32C3_Matrix' }],
-          optionalServices: [SERVICE_UUID]
-        });
 
       const server = await device.gatt.connect();
       const service = await server.getPrimaryService(SERVICE_UUID);
       const rxChar = await service.getCharacteristic(CHARACTERISTIC_UUID_RX);
-        const server = await bleDevice.gatt.connect();
-        const service = await server.getPrimaryService(SERVICE_UUID);
-        rxCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID_RX);
 
       const deviceId = device.id;
-        document.getElementById('statusText').innerText = "狀態：已連線至 ESP32C3_Matrix";
-        document.getElementById('statusText').style.color = "green";
-        document.getElementById('connectBtn').innerText = "藍芽已連線";
-        document.getElementById('connectBtn').disabled = true;
 
       if (!deviceConfigs[deviceId]) {
         deviceConfigs[deviceId] = {
@@ -433,11 +318,7 @@ try {
           pinNames: {}
         };
         saveLocalData();
-      } catch (error) {
-        console.error("BLE 連線失敗:", error);
-        document.getElementById('statusText').innerText = "連線失敗: " + error.message;
-        document.getElementById('statusText').style.color = "red";
-}
+      }
 
       connectedDevices[deviceId] = {
         id: deviceId,
@@ -456,31 +337,19 @@ try {
       alert(`成功連線至 ${connectedDevices[deviceId].name}`);
     } catch (err) {
       alert("連線失敗：" + err);
-}
+    }
   }
 
-  // 發送單一字串指令 (可以是一組 1,255 或一串 1,255,2,128,3,0)
-  async function sendRawCommand(deviceId, cmdString) {
+  async function sendPwmCommand(deviceId, pin, val) {
     const dev = connectedDevices[deviceId];
     if (dev && dev.rxChar) {
-    // 2. 底層藍芽發送函式
-    async function sendBleCommand(payload) {
-      if (!rxCharacteristic) return;
-try {
-const encoder = new TextEncoder();
-        await dev.rxChar.writeValue(encoder.encode(cmdString));
+      try {
+        const encoder = new TextEncoder();
+        await dev.rxChar.writeValue(encoder.encode(`${pin},${val}`));
       } catch (e) {
         console.error("發送失敗:", e);
-        await rxCharacteristic.writeValue(encoder.encode(payload));
-        console.log("已發送至 ESP32:", payload);
-      } catch (err) {
-        console.error("發送失敗:", err);
-}
-}
-  }
-
-  function sendPwmCommand(deviceId, pin, val) {
-    sendRawCommand(deviceId, `${pin},${val}`);
+      }
+    }
   }
 
   function renderDevices() {
@@ -498,19 +367,42 @@ const encoder = new TextEncoder();
     });
   }
 
+  // 3. 群組控制頁面渲染 (含單燈與雙色燈色溫控制)
   function renderGroupControl() {
     const container = document.getElementById('groupControlList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請至「群組編輯」頁面建立。</p>' : '';
-    // 3. 雙色溫 + 總功率動態計算
-    function updateDualColorPwm() {
-      const tempVal = parseFloat(document.getElementById('colorTempSlider').value) / 100;
-      const powerVal = parseFloat(document.getElementById('powerSlider').value) / 100;
 
     groups.forEach(grp => {
+      if (!grp.members) grp.members = [];
+      if (!grp.dualLights) grp.dualLights = [];
+
+      // 雙色燈控制區塊
+      let dualControlsHtml = grp.dualLights.map(dl => {
+        const ctVal = dl.ct !== undefined ? dl.ct : 128; // 色溫 0(暖)~255(冷)
+        return `
+          <div class="dual-light-card">
+            <div style="display:flex; justify-content:space-between; font-weight:bold;">
+              <span>💡 雙色燈：${dl.name}</span>
+              <span id="ct-val-${grp.id}-${dl.id}">${Math.round((ctVal/255)*100)}% (冷)</span>
+            </div>
+            <div style="font-size:12px; color:#666; margin-top:2px;">[暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}]</div>
+            <label style="font-size:13px; margin-top:5px; display:block;">色溫調節 (暖 ↔ 冷)：</label>
+            <input type="range" min="0" max="255" value="${ctVal}" class="slider"
+                   oninput="setDualLightCT('${grp.id}', '${dl.id}', this.value)">
+            <div class="ticks">
+              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 0)">100%暖光</span>
+              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 64)">25%冷光</span>
+              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 128)">50%中性</span>
+              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 191)">75%冷光</span>
+              <span class="tick-btn" onclick="setDualLightCTSlider('${grp.id}', '${dl.id}', 255)">100%冷光</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 單燈/腳位控制區塊
       let singleControlsHtml = grp.members.map(m => {
         const pinLabel = getPinDisplayName(m.deviceId, m.pin);
-      const coldRatio = 1.0 - tempVal;
-      const warmRatio = tempVal;
 
         return `
           <div style="margin: 12px 0; background: #f8f9fa; padding: 10px; border-radius: 6px;">
@@ -533,18 +425,18 @@ const encoder = new TextEncoder();
             </div>
           </div>`;
       }).join('');
-      const pwm0 = Math.round(255 * coldRatio * powerVal);
-      const pwm1 = Math.round(255 * warmRatio * powerVal);
+
+      const masterVal = grp.lastPower !== undefined ? grp.lastPower : 0;
 
       container.innerHTML += `
         <div class="card" style="border: 1px solid #e0e0e0;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <h4>${grp.name}</h4>
-            <span id="grp-val-${grp.id}" style="font-weight:bold; color:var(--primary);">0%</span>
+            <span id="grp-val-${grp.id}" style="font-weight:bold; color:var(--primary);">${getPercentStr(masterVal)}</span>
           </div>
           
           <label style="font-weight:bold;">群組總量同步調整：</label>
-          <input type="range" min="0" max="255" value="0" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value)">
+          <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value)">
           <div class="ticks">
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 64)">25%</span>
@@ -552,50 +444,76 @@ const encoder = new TextEncoder();
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 191)">75%</span>
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 255)">100%</span>
           </div>
-      // 更新畫面顯示
-      document.getElementById('coldPercentDisplay').innerText = `${Math.round(coldRatio * 100)}%`;
-      document.getElementById('warmPercentDisplay').innerText = `${Math.round(warmRatio * 100)}%`;
-      document.getElementById('powerPercentDisplay').innerText = `${Math.round(powerVal * 100)}%`;
-      document.getElementById('pwm0Value').innerText = pwm0;
-      document.getElementById('pwm1Value').innerText = pwm1;
 
           <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具 ▼</button>
           
           <div id="detail-${grp.id}" class="group-detail">
-            <p style="font-size:12px; color:#666;">（此處調整只會改動該燈具，不會動到上面與其他燈）</p>
-            ${singleControlsHtml || '<p style="color:#888">此群組尚未添加任何燈具成員。</p>'}
+            <p style="font-size:12px; color:#666;">（此處調整只會改動該燈具，色溫不會被總功率蓋掉）</p>
+            ${dualControlsHtml}
+            ${singleControlsHtml || (grp.dualLights.length === 0 ? '<p style="color:#888">此群組尚未添加任何燈具成員。</p>' : '')}
           </div>
         </div>`;
     });
   }
 
-  // 修改：將屬於同一台 ESP32 的腳位整合為一串指令打包發送 (例如: "1,255,2,255,3,255")
   function setGroupPwm(groupId, val) {
+    val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
 
+    grp.lastPower = val;
     document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
 
-    // 1. 將成員依裝置分類
-    let deviceMap = {};
-    grp.members.forEach(m => {
-      if (!deviceMap[m.deviceId]) deviceMap[m.deviceId] = [];
-      deviceMap[m.deviceId].push(m.pin);
+    // 1. 單腳位成員控制
+    if (grp.members) {
+      grp.members.forEach(m => {
+        sendPwmCommand(m.deviceId, m.pin, val);
+        
+        const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
+        const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
+        if (subSlider) subSlider.value = val;
+        if (valSpan) valSpan.innerText = getPercentStr(val);
+      });
+    }
 
-      // UI 更新
-      const subSlider = document.getElementById(`slider-${grp.id}-${m.deviceId}-${m.pin}`);
-      const valSpan = document.getElementById(`val-${grp.id}-${m.deviceId}-${m.pin}`);
-      if (subSlider) subSlider.value = val;
-      if (valSpan) valSpan.innerText = getPercentStr(val);
-    });
+    // 2. 雙色燈成員控制 (根據設定好的色溫比率 * 總功率)
+    if (grp.dualLights) {
+      grp.dualLights.forEach(dl => {
+        const ct = dl.ct !== undefined ? dl.ct : 128;
+        const warmRatio = (255 - ct) / 255;
+        const coolRatio = ct / 255;
 
-    // 2. 針對每台裝置打包指令並一口氣發送
-    Object.keys(deviceMap).forEach(deviceId => {
-      const pins = deviceMap[deviceId];
-      const cmdParts = pins.map(pin => `${pin},${val}`);
-      const fullCmd = cmdParts.join(','); // 組合結果範例："1,255,2,255,3,255"
-      sendRawCommand(deviceId, fullCmd);
-    });
+        const warmPwm = Math.round(val * warmRatio);
+        const coolPwm = Math.round(val * coolRatio);
+
+        sendPwmCommand(dl.deviceId, dl.warmPin, warmPwm);
+        sendPwmCommand(dl.deviceId, dl.coolPin, coolPwm);
+      });
+    }
+
+    saveLocalData();
+  }
+
+  function setDualLightCT(groupId, dualLightId, ctVal) {
+    ctVal = parseInt(ctVal);
+    const grp = groups.find(g => g.id === groupId);
+    if (!grp || !grp.dualLights) return;
+
+    const dl = grp.dualLights.find(d => d.id === dualLightId);
+    if (!dl) return;
+
+    dl.ct = ctVal;
+    const valSpan = document.getElementById(`ct-val-${groupId}-${dualLightId}`);
+    if (valSpan) valSpan.innerText = `${Math.round((ctVal/255)*100)}% (冷)`;
+
+    // 保持目前總功率，重新發送雙色燈 PWM
+    const currentPower = grp.lastPower !== undefined ? grp.lastPower : 0;
+    setGroupPwm(groupId, currentPower);
+  }
+
+  function setDualLightCTSlider(groupId, dualLightId, val) {
+    setDualLightCT(groupId, dualLightId, val);
+    renderGroupControl();
   }
 
   function setMasterGroupSlider(groupId, val) {
@@ -620,11 +538,16 @@ const encoder = new TextEncoder();
     el.style.display = el.style.display === 'block' ? 'none' : 'block';
   }
 
+  // 4. 群組編輯頁面 (包含雙色燈設定區塊)
   function renderGroupEdit() {
     const container = document.getElementById('groupEditList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請點擊上方按鈕建立。</p>' : '';
 
     groups.forEach(grp => {
+      if (!grp.members) grp.members = [];
+      if (!grp.dualLights) grp.dualLights = [];
+
+      // 單燈勾選清單
       let memberOptionsHtml = '';
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
@@ -642,6 +565,14 @@ const encoder = new TextEncoder();
         });
       });
 
+      // 已建立的雙色燈清單
+      let dualLightsListHtml = grp.dualLights.map(dl => `
+        <div style="display:flex; justify-content:space-between; align-items:center; background:#f8f9fa; padding:6px 10px; margin-bottom:6px; border-radius:4px;">
+          <span>💡 <strong>${dl.name}</strong> （暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}）</span>
+          <button class="btn btn-danger" style="padding:2px 6px; font-size:12px;" onclick="deleteDualLight('${grp.id}', '${dl.id}')">刪除</button>
+        </div>
+      `).join('');
+
       container.innerHTML += `
         <div class="card" style="border: 1px solid #ddd;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -649,8 +580,16 @@ const encoder = new TextEncoder();
             <button class="btn btn-danger" style="padding:4px 8px;" onclick="deleteGroup('${grp.id}')">刪除群組</button>
           </div>
           
-          <h5 style="margin-top:10px;">勾選隸屬於此群組的燈具：</h5>
-          <div style="margin-top:8px;">${memberOptionsHtml || '目前無可用的燈具腳位'}</div>
+          <div style="border-top:1px solid #eee; margin-top:10px; padding-top:10px;">
+            <h5 style="margin:5px 0;">雙色燈具成員：</h5>
+            ${dualLightsListHtml || '<div style="color:#888; font-size:13px; margin-bottom:5px;">尚無雙色燈具</div>'}
+            <button class="btn" style="font-size:12px;" onclick="promptAddDualLight('${grp.id}')">+ 新增雙色燈具</button>
+          </div>
+
+          <div style="border-top:1px solid #eee; margin-top:10px; padding-top:10px;">
+            <h5 style="margin:5px 0;">獨立/單腳位成員：</h5>
+            <div style="margin-top:8px;">${memberOptionsHtml || '目前無可用的燈具腳位'}</div>
+          </div>
         </div>`;
     });
   }
@@ -662,10 +601,53 @@ const encoder = new TextEncoder();
     groups.push({
       id: 'grp_' + Date.now(),
       name: name,
-      members: []
+      members: [],
+      dualLights: [],
+      lastPower: 0
     });
     saveLocalData();
     renderGroupEdit();
+  }
+
+  function promptAddDualLight(groupId) {
+    const grp = groups.find(g => g.id === groupId);
+    if (!grp) return;
+
+    const devIds = Object.keys(deviceConfigs);
+    if (devIds.length === 0) {
+      alert("請先在藍芽頁面配對連線 ESP32 裝置！");
+      return;
+    }
+
+    const name = prompt("請輸入雙色燈名稱：", "主燈 1");
+    if (!name) return;
+
+    const warmPin = prompt("請輸入【暖光】GPIO 腳位 (例如: 1)：", "1");
+    const coolPin = prompt("請輸入【冷光】GPIO 腳位 (例如: 2)：", "2");
+
+    if (!warmPin || !coolPin) return;
+
+    if (!grp.dualLights) grp.dualLights = [];
+    grp.dualLights.push({
+      id: 'dl_' + Date.now(),
+      name: name,
+      deviceId: devIds[0],
+      warmPin: parseInt(warmPin),
+      coolPin: parseInt(coolPin),
+      ct: 128
+    });
+
+    saveLocalData();
+    renderGroupEdit();
+  }
+
+  function deleteDualLight(groupId, dualLightId) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp && grp.dualLights) {
+      grp.dualLights = grp.dualLights.filter(d => d.id !== dualLightId);
+      saveLocalData();
+      renderGroupEdit();
+    }
   }
 
   function toggleGroupMember(groupId, deviceId, pin, isChecked) {
@@ -686,6 +668,7 @@ const encoder = new TextEncoder();
     renderGroupEdit();
   }
 
+  // 5. 腳位名稱編輯與隱藏設定
   function renderPinMasking() {
     const container = document.getElementById('pinMaskContainer');
     const devIds = Object.keys(deviceConfigs);
@@ -722,9 +705,7 @@ const encoder = new TextEncoder();
       if (!deviceConfigs[deviceId].pinNames) deviceConfigs[deviceId].pinNames = {};
       deviceConfigs[deviceId].pinNames[pin] = name.trim();
       saveLocalData();
-      // 一次發送 GPIO 0 與 GPIO 1 的 PWM
-      sendBleCommand(`0,${pwm0},1,${pwm1}`);
-}
+    }
   }
 
   function togglePinMask(deviceId, pin) {
@@ -736,16 +717,12 @@ const encoder = new TextEncoder();
       cfg.disabledPins.splice(idx, 1);
     } else {
       cfg.disabledPins.push(pin);
-    // 4. 單燈控制發送
-    function onSinglePinChange(pin, val) {
-      const percent = Math.round((val / 255) * 100);
-      document.getElementById(`display-pin-${pin}`).innerText = `${percent}%`;
-      sendBleCommand(`${pin},${val}`);
-}
+    }
     saveLocalData();
     renderPinMasking();
   }
 
+  // 6. 排程邏輯
   function updateSchedDisplay(val) {
     document.getElementById('schedPwmVal').innerText = getPercentStr(val);
   }
@@ -837,14 +814,11 @@ const encoder = new TextEncoder();
     renderSchedules();
   }
 
-  function checkSchedules() {
+  // 排程計時器
+  setInterval(() => {
     const now = new Date();
     const currentDay = now.getDay();
     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const minuteStamp = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()} ${currentTime}`;
-
-    if (lastExecutedMin === minuteStamp) return;
-    lastExecutedMin = minuteStamp;
 
     schedules.forEach(sch => {
       if (sch.time === currentTime && sch.days.includes(currentDay)) {
@@ -856,20 +830,8 @@ const encoder = new TextEncoder();
         }
       }
     });
-  }
-
-  function alignScheduleTimer() {
-    checkSchedules();
-    const now = new Date();
-    const delay = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
-    
-    setTimeout(() => {
-      checkSchedules();
-      setInterval(checkSchedules, 60000);
-    }, delay);
-  }
+  }, 30000);
 </script>
-  </script>
 
 </body>
 </html>
