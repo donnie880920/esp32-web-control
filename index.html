@@ -219,7 +219,10 @@
   let groups = [];           
   let schedules = [];        
   let deviceConfigs = {};    
-  let sensorStates = {}; // 紀錄感測器狀態 { "deviceId_pin": true/false }
+  let sensorStates = {}; 
+
+  // 感測器狀態管理：記憶觸發前的亮度狀態與手動介入狀態
+  let sensorOverrideStates = {}; 
 
   window.onload = function() {
     loadLocalData();
@@ -340,7 +343,6 @@
         saveLocalData();
       }
 
-      // 嘗試開啟 Notify 接收感測器資料 (若 BLECharacteristic 支援)
       try {
         if (rxChar.properties.notify || rxChar.properties.indicate) {
           await rxChar.startNotifications();
@@ -372,7 +374,7 @@
     }
   }
 
-  // 處理 ESP32 傳回的 Notify 訊號（如: "SENSOR,8,1"）
+  // 處理 ESP32 傳回的 Notify 訊號（包含記憶還原與手動優先邏輯）
   function handleBleNotify(deviceId, event) {
     const value = new TextDecoder().decode(event.target.value).trim();
     console.log("收到藍芽 Notification:", value);
@@ -381,8 +383,46 @@
     if (parts[0] === 'SENSOR' && parts.length >= 3) {
       const pin = parseInt(parts[1]);
       const state = parseInt(parts[2]) === 1;
+      
       sensorStates[`${deviceId}_${pin}`] = state;
       renderSensors();
+
+      if (groups.length > 0) {
+        const targetGroup = groups[0]; // 假設預設聯動第一個群組
+        const grpId = targetGroup.id;
+
+        if (!sensorOverrideStates[grpId]) {
+          sensorOverrideStates[grpId] = {
+            active: false,
+            previousVal: 0,
+            manualInterfered: false
+          };
+        }
+
+        const stateObj = sensorOverrideStates[grpId];
+
+        if (state) {
+          // 感測器剛被觸發 (HIGH)
+          if (!stateObj.active) {
+            stateObj.active = true;
+            stateObj.previousVal = targetGroup.lastPower !== undefined ? targetGroup.lastPower : 0;
+            stateObj.manualInterfered = false; // 重置手動介入狀態
+            
+            // 將群組開至最高亮度 (255)
+            setGroupPwm(grpId, 255, false);
+          }
+        } else {
+          // 感測器時間結束 / 離開 (LOW)
+          if (stateObj.active) {
+            stateObj.active = false;
+            
+            // 如果期間使用者沒有手動改過亮度，則還原回感應之前的亮度
+            if (!stateObj.manualInterfered) {
+              setGroupPwm(grpId, stateObj.previousVal, false);
+            }
+          }
+        }
+      }
     }
   }
 
@@ -550,7 +590,7 @@
           </div>
           
           <label style="font-weight:bold;">群組總功率同步調整：</label>
-          <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value)">
+          <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value, true)">
           <div class="ticks">
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
             <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 64)">25%</span>
@@ -569,13 +609,23 @@
     });
   }
 
-  function setGroupPwm(groupId, val) {
+  // 修改 setGroupPwm，加入 isUserManual 判斷
+  function setGroupPwm(groupId, val, isUserManual = false) {
     val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
 
+    // 如果使用者親自滑動了拉桿，鎖定感測器結束時的還原功能，以使用者手動為主
+    if (isUserManual && sensorOverrideStates[groupId]) {
+      sensorOverrideStates[groupId].manualInterfered = true;
+    }
+
     grp.lastPower = val;
-    document.getElementById(`grp-val-${groupId}`).innerText = getPercentStr(val);
+    const grpValEl = document.getElementById(`grp-val-${groupId}`);
+    const grpSliderEl = document.getElementById(`grp-master-slider-${groupId}`);
+    
+    if (grpValEl) grpValEl.innerText = getPercentStr(val);
+    if (grpSliderEl) grpSliderEl.value = val;
 
     const deviceCmdMap = {};
 
@@ -622,6 +672,10 @@
   function updateDualLight(groupId, dualLightId) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp || !grp.dualLights) return;
+
+    if (sensorOverrideStates[groupId]) {
+      sensorOverrideStates[groupId].manualInterfered = true;
+    }
 
     const dl = grp.dualLights.find(d => d.id === dualLightId);
     if (!dl) return;
@@ -670,11 +724,14 @@
     const slider = document.getElementById(`grp-master-slider-${groupId}`);
     if (slider) {
       slider.value = val;
-      setGroupPwm(groupId, val);
+      setGroupPwm(groupId, val, true);
     }
   }
 
   function setSingleSlider(groupId, deviceId, pin, val) {
+    if (sensorOverrideStates[groupId]) {
+      sensorOverrideStates[groupId].manualInterfered = true;
+    }
     const slider = document.getElementById(`slider-${groupId}-${deviceId}-${pin}`);
     if (slider) {
       slider.value = val;
@@ -965,7 +1022,7 @@
     schedules.forEach(sch => {
       if (sch.time === currentTime && sch.days.includes(currentDay)) {
         if (sch.targetType === 'group') {
-          setGroupPwm(sch.targetVal, sch.pwmVal);
+          setGroupPwm(sch.targetVal, sch.pwmVal, false);
         } else {
           const [devId, pin] = sch.targetVal.split('|');
           sendBatchPwmCommand(devId, [{ pin: parseInt(pin), val: parseInt(sch.pwmVal) }]);
