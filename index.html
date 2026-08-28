@@ -79,13 +79,13 @@
     .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 12px; margin: 10px 0; }
 
     /* 感測器卡片樣式 */
-    .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 10px; }
+    .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
     .sensor-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; background: #fafafa; transition: all 0.3s; }
     .sensor-card.active { background-color: #d4edda; border-color: #c3e6cb; }
     .sensor-card .sensor-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
     .sensor-card .sensor-status { font-weight: bold; font-size: 16px; color: #888; }
     .sensor-card.active .sensor-status { color: #155724; }
-    .sensor-card select { font-size: 12px; margin-top: 6px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; }
+    .sensor-card select, .sensor-card input[type="range"] { font-size: 12px; margin-top: 4px; }
     
     .sensor-setting-box { background: #f0f4f8; padding: 10px 12px; border-radius: 6px; margin-top: 10px; border: 1px solid #d0dbe5; }
 
@@ -141,8 +141,8 @@
   <!-- TAB 2: 感測器狀態監控頁面 -->
   <div id="tab-sensors" class="tab-content">
     <div class="card">
-      <h3>感測器 / 開關狀態與觸發邏輯設定 (GPIO 8 ~ 10)</h3>
-      <p style="color: #666; font-size: 14px;">設定感測器平時未對地/高電位與對地觸發時的動作邏輯。</p>
+      <h3>感測器 / 開關狀態與觸發亮度設定 (GPIO 8 ~ 10)</h3>
+      <p style="color: #666; font-size: 14px;">對地短路即觸發亮燈。在此可自訂感測器觸發時連動的預設點亮功率 (%)。</p>
       <div id="sensorListContainer"></div>
     </div>
   </div>
@@ -243,7 +243,7 @@
   let deviceConfigs = {};    
   let sensorStates = {}; 
 
-  // 感測器狀態管理：記憶觸發前的亮度、手動介入狀態與延遲定時器
+  // 感測器狀態管理：記錄觸發前的亮度狀態與定時器
   let sensorOverrideStates = {}; 
 
   window.onload = function() {
@@ -361,7 +361,8 @@
           name: device.name || `ESP32_${deviceId.substr(0,4)}`,
           disabledPins: [],
           pinNames: {},
-          sensorModes: {} // 記錄 GPIO 8-10 觸發邏輯: 'low' (對地觸發) 或 'high' (高電位觸發)
+          sensorModes: {},      // 'low' 對地 / 'high' 高電位
+          sensorPowers: {}     // 記錄每個 GPIO 感測器觸發時的亮度 PWM 值 (0-255)
         };
         saveLocalData();
       }
@@ -405,28 +406,31 @@
     const parts = value.split(',');
     if (parts[0] === 'SENSOR' && parts.length >= 3) {
       const pin = parseInt(parts[1]);
-      const rawVal = parseInt(parts[2]); // 0 表示 LOW (對地), 1 表示 HIGH (高電位)
+      const rawVal = parseInt(parts[2]); // 0 代表接地 LOW, 1 代表高電位 HIGH
       const sensorKey = `${deviceId}_${pin}`;
       
       const cfg = deviceConfigs[deviceId];
-      const sensorMode = (cfg && cfg.sensorModes && cfg.sensorModes[pin]) ? cfg.sensorModes[pin] : 'low'; // 預設 low 代表對地觸發
+      const sensorMode = (cfg && cfg.sensorModes && cfg.sensorModes[pin]) ? cfg.sensorModes[pin] : 'low'; // 預設對地觸發
 
-      // 判斷是否符合觸發條件
+      // 判斷是否觸發：Low active 模式下，rawVal === 0 為短路對地觸發
       let isTriggered = false;
       if (sensorMode === 'low') {
-        isTriggered = (rawVal === 0); // 低電位對地觸發
+        isTriggered = (rawVal === 0); 
       } else {
-        isTriggered = (rawVal === 1); // 高電位觸發
+        isTriggered = (rawVal === 1); 
       }
 
       sensorStates[sensorKey] = isTriggered;
       renderSensors();
 
+      // 取得感測器設定的觸發亮度 (PWM 0-255)，預設為 255 (100%)
+      const triggerPowerPwm = (cfg && cfg.sensorPowers && cfg.sensorPowers[pin] !== undefined) ? cfg.sensorPowers[pin] : 255;
+
       // 搜尋綁定此感測器的所有群組
       const targetGroups = groups.filter(g => g.boundSensor === sensorKey);
 
       targetGroups.forEach(targetGroup => {
-        // 若感測器關閉，不進行動態亮燈連動
+        // 若群組的感測器開關關閉，跳過自動連動
         if (targetGroup.sensorEnabled === false) return;
 
         const grpId = targetGroup.id;
@@ -443,7 +447,7 @@
         const stateObj = sensorOverrideStates[grpId];
 
         if (isTriggered) {
-          // 觸發對地/感應 -> 清除延遲關閉定時器
+          // 觸發亮燈：清除延遲關閉計時器
           if (stateObj.timer) {
             clearTimeout(stateObj.timer);
             stateObj.timer = null;
@@ -452,16 +456,16 @@
           if (!stateObj.active) {
             stateObj.active = true;
             stateObj.previousVal = targetGroup.lastPower !== undefined ? targetGroup.lastPower : 0;
-            // 觸發亮燈 (最高亮度 255)
-            setGroupPwm(grpId, 255, false);
           }
+          // 點亮為感測器頁面說定的點亮 % (色溫維持原群組設定)
+          setGroupPwm(grpId, triggerPowerPwm, false);
         } else {
-          // 未觸發/斷開對地 -> 啟動延遲倒數與熄滅/還原
+          // 沒對地 / 短路開關離開：啟動延遲熄滅/還原計時
           if (stateObj.active && !stateObj.timer) {
             stateObj.timer = setTimeout(() => {
               stateObj.active = false;
               stateObj.timer = null;
-              // 恢復為原本亮度/關燈
+              // 還原為原本的群組亮度 (或 0% 熄滅)
               setGroupPwm(grpId, stateObj.previousVal, false);
             }, delaySeconds * 1000);
           }
@@ -521,29 +525,44 @@
     devIds.forEach(devId => {
       const devCfg = deviceConfigs[devId];
       if (!devCfg.sensorModes) devCfg.sensorModes = {};
+      if (!devCfg.sensorPowers) devCfg.sensorPowers = {};
 
       let cardsHtml = SENSOR_PINS.map(pin => {
         if (devCfg.disabledPins.includes(pin)) return '';
 
         const pinLabel = getPinDisplayName(devId, pin);
         const isTriggered = sensorStates[`${devId}_${pin}`] || false;
-        const currentMode = devCfg.sensorModes[pin] || 'low'; // 預設 low
+        const currentMode = devCfg.sensorModes[pin] || 'low'; // 預設 low (對地短路觸發)
+        const currentPowerPwm = devCfg.sensorPowers[pin] !== undefined ? devCfg.sensorPowers[pin] : 255;
 
         return `
           <div class="sensor-card ${isTriggered ? 'active' : ''}">
             <div class="sensor-title">${pinLabel}</div>
-            <div class="sensor-status">${isTriggered ? '亮燈觸發中' : '平時狀態 (熄滅)'}</div>
+            <div class="sensor-status">${isTriggered ? '⚡ 觸發亮燈中' : '⚪ 平時狀態 (待命/無訊號)'}</div>
+            
+            <div style="margin-top:12px; text-align:left; font-size:12px; color:#333; background:#fff; padding:8px; border-radius:6px; border:1px solid #eee;">
+              <label><strong>觸發時點亮功率 (%)：</strong> <span id="sensor-power-val-${devId}-${pin}">${getPercentStr(currentPowerPwm)}</span></label>
+              <input type="range" min="0" max="255" value="${currentPowerPwm}" class="slider" 
+                     oninput="updateSensorPower('${devId}', ${pin}, this.value)">
+              <div class="ticks">
+                <span class="tick-btn" onclick="setSensorPowerQuick('${devId}', ${pin}, 64)">25%</span>
+                <span class="tick-btn" onclick="setSensorPowerQuick('${devId}', ${pin}, 128)">50%</span>
+                <span class="tick-btn" onclick="setSensorPowerQuick('${devId}', ${pin}, 191)">75%</span>
+                <span class="tick-btn" onclick="setSensorPowerQuick('${devId}', ${pin}, 255)">100%</span>
+              </div>
+            </div>
+
             <div style="margin-top:10px; text-align:left; font-size:12px; color:#555;">
-              <label><strong>觸發邏輯設定：</strong></label>
+              <label><strong>觸發訊號邏輯：</strong></label>
               <select onchange="updateSensorMode('${devId}', ${pin}, this.value)">
-                <option value="low" ${currentMode === 'low' ? 'selected' : ''}>Low Active (對地接地亮燈)</option>
-                <option value="high" ${currentMode === 'high' ? 'selected' : ''}>High Active (高電位亮燈)</option>
+                <option value="low" ${currentMode === 'low' ? 'selected' : ''}>Low Active (GPIO對地短路觸發)</option>
+                <option value="high" ${currentMode === 'high' ? 'selected' : ''}>High Active (高電位 3.3V 觸發)</option>
               </select>
             </div>
             <div style="margin-top:6px; font-size:11px; color:#777; text-align:left;">
               ${currentMode === 'low' 
-                ? '• 平時 (未對地/高電位): 燈熄滅<br>• 觸發 (對地/低電位): 燈開啟' 
-                : '• 平時 (對地/低電位): 燈熄滅<br>• 觸發 (未對地/高電位): 燈開啟'}
+                ? '• 未對地: 熄滅/恢復原狀<br>• 短路對地(GND): 點亮至 ' + getPercentStr(currentPowerPwm)
+                : '• 對地: 熄滅/恢復原狀<br>• 通電高電位: 點亮至 ' + getPercentStr(currentPowerPwm)}
             </div>
           </div>`;
       }).join('');
@@ -565,6 +584,23 @@
       saveLocalData();
       renderSensors();
     }
+  }
+
+  function updateSensorPower(deviceId, pin, val) {
+    if (deviceConfigs[deviceId]) {
+      if (!deviceConfigs[deviceId].sensorPowers) deviceConfigs[deviceId].sensorPowers = {};
+      deviceConfigs[deviceId].sensorPowers[pin] = parseInt(val);
+      
+      const valSpan = document.getElementById(`sensor-power-val-${deviceId}-${pin}`);
+      if (valSpan) valSpan.innerText = getPercentStr(val);
+      
+      saveLocalData();
+    }
+  }
+
+  function setSensorPowerQuick(deviceId, pin, val) {
+    updateSensorPower(deviceId, pin, val);
+    renderSensors();
   }
 
   function calculateDualLightPwm(ctVal, powerVal) {
@@ -595,7 +631,7 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
-      const isSensorActive = grp.boundSensor && (grp.sensorEnabled !== false); // 開關打開狀態
+      const isSensorActive = grp.boundSensor && (grp.sensorEnabled !== false); 
       const disabledAttr = isSensorActive ? 'disabled' : '';
       const disabledClass = isSensorActive ? 'disabled' : '';
 
@@ -611,7 +647,7 @@
             </div>
             <div style="font-size:12px; color:#666; margin-top:2px;">[暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}]</div>
             
-            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold;">色溫調整 (0=暖光, 255=冷光)：</label>
+            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold;">色溫調整 (鎖定後供感測器連動使用)：</label>
             <input type="range" min="0" max="255" value="${ctVal}" id="ct-slider-${grp.id}-${dl.id}" class="slider" ${disabledAttr}
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
             <div class="ticks">
@@ -622,7 +658,7 @@
               <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 255)">100%冷光</span>
             </div>
 
-            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold; color:#0056b3;">燈具功率調整 (等比例縮放 PWM)：</label>
+            <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold; color:#0056b3;">燈具功率調整：</label>
             <input type="range" min="0" max="255" value="${powerVal}" id="power-slider-${grp.id}-${dl.id}" class="slider" ${disabledAttr}
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
             <div class="ticks">
@@ -663,7 +699,6 @@
 
       const masterVal = grp.lastPower !== undefined ? grp.lastPower : 255;
 
-      // 感測器開關列
       let sensorBarHtml = '';
       if (grp.boundSensor) {
         const [sDevId, sPin] = grp.boundSensor.split('_');
@@ -672,7 +707,7 @@
 
         sensorBarHtml = `
           <div class="sensor-control-bar">
-            <span>📡 連動感測器：<strong>${sensorName}</strong> ${isEnabled ? '<span class="locked-hint">🔒 (已由感測器完全接管，手動控制已鎖定)</span>' : ''}</span>
+            <span>📡 連動感測器：<strong>${sensorName}</strong> ${isEnabled ? '<span class="locked-hint">🔒 (已鎖定，由感測器依設定%接管控制)</span>' : ''}</span>
             <button class="btn ${isEnabled ? 'btn-success' : 'btn-secondary'}" style="padding: 4px 10px; font-size: 12px;" onclick="toggleSensorEnable('${grp.id}')">
               ${isEnabled ? '感測器：已開啟' : '感測器：已關閉'}
             </button>
@@ -699,7 +734,7 @@
             <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 255)">100%</span>
           </div>
 
-          <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具 ▼</button>
+          <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具/色溫 ▼</button>
           
           <div id="detail-${grp.id}" class="group-detail">
             ${dualControlsHtml}
@@ -714,7 +749,7 @@
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
 
-    // 若感測器開啟中且為手動拉滑桿，拒絕操作
+    // 若感測器連動開啟且為手動拉滑桿，拒絕操作
     if (isUserManual && grp.boundSensor && grp.sensorEnabled !== false) {
       return;
     }
@@ -743,7 +778,7 @@
     if (grp.dualLights) {
       grp.dualLights.forEach(dl => {
         dl.power = val;
-        const ctVal = dl.ct !== undefined ? dl.ct : 128;
+        const ctVal = dl.ct !== undefined ? dl.ct : 128; // 沿用群組鎖定的色溫設定
 
         const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, val);
 
