@@ -85,6 +85,17 @@
     .sensor-card.active .sensor-status { color: #155724; }
     
     .sensor-setting-box { background: #f0f4f8; padding: 10px 12px; border-radius: 6px; margin-top: 10px; border: 1px solid #d0dbe5; }
+
+    .sensor-control-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #e9ecef;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -394,6 +405,9 @@
       const targetGroups = groups.filter(g => g.boundSensor === sensorKey);
 
       targetGroups.forEach(targetGroup => {
+        // 若感測器被使用者手動關閉，則忽視連動邏輯
+        if (targetGroup.sensorEnabled === false) return;
+
         const grpId = targetGroup.id;
         const delaySeconds = targetGroup.sensorDelay !== undefined ? parseInt(targetGroup.sensorDelay) : 10;
 
@@ -525,6 +539,15 @@
     return { warmPwm, coolPwm };
   }
 
+  function toggleSensorEnable(groupId) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp) {
+      grp.sensorEnabled = !(grp.sensorEnabled !== false);
+      saveLocalData();
+      renderGroupControl();
+    }
+  }
+
   function renderGroupControl() {
     const container = document.getElementById('groupControlList');
     container.innerHTML = groups.length === 0 ? '<p style="color:#888">目前無群組，請至「群組編輯」頁面建立。</p>' : '';
@@ -597,12 +620,31 @@
 
       const masterVal = grp.lastPower !== undefined ? grp.lastPower : 255;
 
+      // 如果群組有綁定感測器，產生感測器開關工具列
+      let sensorBarHtml = '';
+      if (grp.boundSensor) {
+        const [sDevId, sPin] = grp.boundSensor.split('_');
+        const sensorName = getPinDisplayName(sDevId, sPin);
+        const isEnabled = grp.sensorEnabled !== false; // 預設開啟
+
+        sensorBarHtml = `
+          <div class="sensor-control-bar">
+            <span>📡 連動感測器：<strong>${sensorName}</strong></span>
+            <button class="btn ${isEnabled ? 'btn-success' : 'btn-secondary'}" style="padding: 4px 10px; font-size: 12px;" onclick="toggleSensorEnable('${grp.id}')">
+              ${isEnabled ? '感測器：已開啟' : '感測器：已關閉'}
+            </button>
+          </div>
+        `;
+      }
+
       container.innerHTML += `
         <div class="card" style="border: 1px solid #e0e0e0;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <h4>${grp.name}</h4>
             <span id="grp-val-${grp.id}" style="font-weight:bold; color:var(--primary);">${getPercentStr(masterVal)}</span>
           </div>
+
+          ${sensorBarHtml}
           
           <label style="font-weight:bold;">群組總功率同步調整：</label>
           <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value, true)">
@@ -870,6 +912,7 @@
       name: name,
       boundSensor: "",
       sensorDelay: 10,
+      sensorEnabled: true,
       members: [],
       dualLights: [],
       lastPower: 255
