@@ -12,6 +12,7 @@
       --text: #333333;
       --gray: #6c757d;
       --disabled: #e9ecef;
+      --success: #28a745;
     }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; }
     
@@ -53,7 +54,7 @@
     .btn { background-color: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
     .btn-danger { background-color: #dc3545; }
     .btn-secondary { background-color: var(--gray); }
-    .btn-success { background-color: #28a745; }
+    .btn-success { background-color: var(--success); }
     .slider { width: 100%; margin: 5px 0 2px 0; }
     
     .ticks { display: flex; justify-content: space-between; font-size: 11px; color: #666; margin-bottom: 8px; }
@@ -74,6 +75,14 @@
     .device-status.connected { background: #28a745; color: white; }
 
     .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 12px; margin: 10px 0; }
+
+    /* 感測器卡片樣式 */
+    .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 10px; }
+    .sensor-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; background: #fafafa; transition: all 0.3s; }
+    .sensor-card.active { background-color: #d4edda; border-color: #c3e6cb; }
+    .sensor-card .sensor-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
+    .sensor-card .sensor-status { font-weight: bold; font-size: 16px; color: #888; }
+    .sensor-card.active .sensor-status { color: #155724; }
   </style>
 </head>
 <body>
@@ -82,6 +91,7 @@
   <h2>ESP32-C3 控制矩陣</h2>
   <nav>
     <button class="active" onclick="switchTab('dashboard')">群組控制</button>
+    <button onclick="switchTab('sensors')">感測器監控</button>
     <button onclick="switchTab('bluetooth')">藍芽裝置</button>
     <button onclick="switchTab('group-edit')">群組編輯</button>
     <button onclick="switchTab('pins')">腳位管理</button>
@@ -106,7 +116,16 @@
     </div>
   </div>
 
-  <!-- TAB 2: 藍芽裝置連線管理區 -->
+  <!-- TAB 2: 感測器狀態監控頁面 -->
+  <div id="tab-sensors" class="tab-content">
+    <div class="card">
+      <h3>感測器 / 開關狀態 (GPIO 8 ~ 10)</h3>
+      <p style="color: #666; font-size: 14px;">即時監控 ESP32 人體感測器或開關輸入狀態。</p>
+      <div id="sensorListContainer"></div>
+    </div>
+  </div>
+
+  <!-- TAB 3: 藍芽裝置連線管理區 -->
   <div id="tab-bluetooth" class="tab-content">
     <div class="card">
       <h3>藍芽裝置連線管理</h3>
@@ -116,7 +135,7 @@
     </div>
   </div>
 
-  <!-- TAB 3: 群組編輯頁面 -->
+  <!-- TAB 4: 群組編輯頁面 -->
   <div id="tab-group-edit" class="tab-content">
     <div class="card">
       <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -127,7 +146,7 @@
     </div>
   </div>
 
-  <!-- TAB 4: 腳位管理 -->
+  <!-- TAB 5: 腳位管理 -->
   <div id="tab-pins" class="tab-content">
     <div class="card">
       <h3>腳位編輯與隱藏設定</h3>
@@ -136,7 +155,7 @@
     </div>
   </div>
 
-  <!-- TAB 5: 排程設定 -->
+  <!-- TAB 6: 排程設定 -->
   <div id="tab-schedule" class="tab-content">
     <div class="card">
       <h3>新增定時排程</h3>
@@ -192,17 +211,21 @@
 <script>
   const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
   const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-  const ALL_PINS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21];
+  const PWM_PINS = [0, 1, 2, 3, 4, 5, 6, 7];
+  const SENSOR_PINS = [8, 9, 10];
+  const ALL_PINS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
   let connectedDevices = {}; 
   let groups = [];           
   let schedules = [];        
   let deviceConfigs = {};    
+  let sensorStates = {}; // 紀錄感測器狀態 { "deviceId_pin": true/false }
 
   window.onload = function() {
     loadLocalData();
     renderGroupControl();
     renderDevices();
+    renderSensors();
   };
 
   function saveLocalData() {
@@ -288,6 +311,7 @@
     event.target.classList.add('active');
 
     if (tabName === 'dashboard') renderGroupControl();
+    if (tabName === 'sensors') renderSensors();
     if (tabName === 'bluetooth') renderDevices();
     if (tabName === 'group-edit') renderGroupEdit();
     if (tabName === 'pins') renderPinMasking();
@@ -316,6 +340,16 @@
         saveLocalData();
       }
 
+      // 嘗試開啟 Notify 接收感測器資料 (若 BLECharacteristic 支援)
+      try {
+        if (rxChar.properties.notify || rxChar.properties.indicate) {
+          await rxChar.startNotifications();
+          rxChar.addEventListener('characteristicvaluechanged', (event) => handleBleNotify(deviceId, event));
+        }
+      } catch (notifyErr) {
+        console.log("此特徵未開啟 Notify 功能: ", notifyErr);
+      }
+
       connectedDevices[deviceId] = {
         id: deviceId,
         name: deviceConfigs[deviceId].name,
@@ -327,20 +361,34 @@
         alert(`裝置 [${connectedDevices[deviceId].name}] 已斷開連線`);
         delete connectedDevices[deviceId];
         renderDevices();
+        renderSensors();
       });
 
       renderDevices();
+      renderSensors();
       alert(`成功連線至 ${connectedDevices[deviceId].name}`);
     } catch (err) {
       alert("連線失敗：" + err);
     }
   }
 
-  // 核心發送：取得所有 connectedDevices 的目標特徵並發送打包指令
+  // 處理 ESP32 傳回的 Notify 訊號（如: "SENSOR,8,1"）
+  function handleBleNotify(deviceId, event) {
+    const value = new TextDecoder().decode(event.target.value).trim();
+    console.log("收到藍芽 Notification:", value);
+
+    const parts = value.split(',');
+    if (parts[0] === 'SENSOR' && parts.length >= 3) {
+      const pin = parseInt(parts[1]);
+      const state = parseInt(parts[2]) === 1;
+      sensorStates[`${deviceId}_${pin}`] = state;
+      renderSensors();
+    }
+  }
+
   async function sendBatchPwmCommand(deviceId, commands) {
     let dev = connectedDevices[deviceId];
     
-    // 若找不到精確 ID，則自動Fallback使用第一個已連線的藍芽裝置（避免裝置ID不一致問題）
     if (!dev) {
       const activeIds = Object.keys(connectedDevices);
       if (activeIds.length > 0) {
@@ -350,9 +398,9 @@
 
     if (dev && dev.rxChar) {
       try {
-        const payload = commands.map(c => `${c.pin},${c.val}`).join(';');
+        const payload = commands.map(c => `${c.pin},${c.val}`).join(',');
         const encoder = new TextEncoder();
-        await dev.rxChar.writeValue(encoder.encode(payload + '\n'));
+        await dev.rxChar.writeValue(encoder.encode(payload));
       } catch (e) {
         console.error("發送藍芽指令失敗:", e);
       }
@@ -376,10 +424,44 @@
     });
   }
 
-  // 雙色燈 PWM 雙腳位邏輯 (互補且可按功率比例縮放)
+  function renderSensors() {
+    const container = document.getElementById('sensorListContainer');
+    const devIds = Object.keys(deviceConfigs);
+    
+    if (devIds.length === 0) {
+      container.innerHTML = '<p style="color:#888">尚無連線裝置，請至「藍芽裝置」分頁配對。</p>';
+      return;
+    }
+
+    let html = '';
+    devIds.forEach(devId => {
+      const devCfg = deviceConfigs[devId];
+      let cardsHtml = SENSOR_PINS.map(pin => {
+        if (devCfg.disabledPins.includes(pin)) return '';
+
+        const pinLabel = getPinDisplayName(devId, pin);
+        const isTriggered = sensorStates[`${devId}_${pin}`] || false;
+
+        return `
+          <div class="sensor-card ${isTriggered ? 'active' : ''}">
+            <div class="sensor-title">${pinLabel}</div>
+            <div class="sensor-status">${isTriggered ? 'HIGH (觸發)' : 'LOW (正常)'}</div>
+          </div>`;
+      }).join('');
+
+      html += `
+        <div style="margin-bottom: 20px;">
+          <h4>${devCfg.name}</h4>
+          <div class="sensor-grid">${cardsHtml || '<p style="color:#888">所有感測器腳位已被隱藏或停用。</p>'}</div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
   function calculateDualLightPwm(ctVal, powerVal) {
-    const warmBase = 255 - ctVal; // 暖光 PWM (255 ~ 0)
-    const coolBase = ctVal;       // 冷光 PWM (0 ~ 255)
+    const warmBase = 255 - ctVal;
+    const coolBase = ctVal;
     
     const powerRatio = powerVal / 255;
     const warmPwm = Math.round(warmBase * powerRatio);
@@ -408,7 +490,6 @@
             </div>
             <div style="font-size:12px; color:#666; margin-top:2px;">[暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}]</div>
             
-            <!-- 1. 色溫調整 -->
             <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold;">色溫調整 (0=暖光, 255=冷光)：</label>
             <input type="range" min="0" max="255" value="${ctVal}" id="ct-slider-${grp.id}-${dl.id}" class="slider"
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
@@ -420,7 +501,6 @@
               <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 255)">100%冷光</span>
             </div>
 
-            <!-- 2. 獨立功率 (亮度) 調整 -->
             <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold; color:#0056b3;">燈具功率調整 (等比例縮放 PWM)：</label>
             <input type="range" min="0" max="255" value="${powerVal}" id="power-slider-${grp.id}-${dl.id}" class="slider"
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
@@ -489,7 +569,6 @@
     });
   }
 
-  // 群組總功率調整 (打包所有雙腳位與單腳位指令)
   function setGroupPwm(groupId, val) {
     val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
@@ -500,7 +579,6 @@
 
     const deviceCmdMap = {};
 
-    // 1. 單腳位成員
     if (grp.members) {
       grp.members.forEach(m => {
         if (!deviceCmdMap[m.deviceId]) deviceCmdMap[m.deviceId] = [];
@@ -513,7 +591,6 @@
       });
     }
 
-    // 2. 雙色燈成員（同時將暖光與冷光腳位打包送出）
     if (grp.dualLights) {
       grp.dualLights.forEach(dl => {
         dl.power = val;
@@ -528,7 +605,6 @@
           deviceCmdMap[targetDev].push({ pin: dl.coolPin, val: coolPwm });
         }
 
-        // 更新 UI
         const pSlider = document.getElementById(`power-slider-${grp.id}-${dl.id}`);
         const summarySpan = document.getElementById(`dl-summary-${grp.id}-${dl.id}`);
         if (pSlider) pSlider.value = val;
@@ -536,7 +612,6 @@
       });
     }
 
-    // 將所有指令一次性打包給藍芽
     Object.keys(deviceCmdMap).forEach(devId => {
       sendBatchPwmCommand(devId, deviceCmdMap[devId]);
     });
@@ -544,7 +619,6 @@
     saveLocalData();
   }
 
-  // 獨立更新單一雙色燈（打包暖光與冷光的雙腳位指令）
   function updateDualLight(groupId, dualLightId) {
     const grp = groups.find(g => g.id === groupId);
     if (!grp || !grp.dualLights) return;
@@ -566,10 +640,8 @@
       summarySpan.innerText = `色溫: ${Math.round((ctVal/255)*100)}% (冷) | 功率: ${getPercentStr(powerVal)}`;
     }
 
-    // 計算暖光與冷光 PWM
     const { warmPwm, coolPwm } = calculateDualLightPwm(ctVal, powerVal);
 
-    // 打包發送，確保格式為 0,128;1,127
     sendBatchPwmCommand(dl.deviceId, [
       { pin: dl.warmPin, val: warmPwm },
       { pin: dl.coolPin, val: coolPwm }
@@ -627,7 +699,7 @@
       let memberOptionsHtml = '';
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
-        ALL_PINS.forEach(pin => {
+        PWM_PINS.forEach(pin => {
           if (!devCfg.disabledPins.includes(pin)) {
             const isChecked = grp.members.some(m => m.deviceId === devId && m.pin === pin);
             const pinLabel = getPinDisplayName(devId, pin);
@@ -662,8 +734,8 @@
           </div>
 
           <div style="border-top:1px solid #eee; margin-top:10px; padding-top:10px;">
-            <h5 style="margin:5px 0;">獨立/單腳位成員：</h5>
-            <div style="margin-top:8px;">${memberOptionsHtml || '目前無可用的燈具腳位'}</div>
+            <h5 style="margin:5px 0;">獨立/單腳位 PWM 成員：</h5>
+            <div style="margin-top:8px;">${memberOptionsHtml || '目前無可用的 PWM 燈具腳位'}</div>
           </div>
         </div>`;
     });
@@ -754,7 +826,7 @@
 
         return `
           <div class="pin-box ${isDisabled ? 'disabled' : 'active'}">
-            <strong>GPIO ${pin}</strong><br>
+            <strong>GPIO ${pin} ${pin >= 8 ? '(感測器)' : '(PWM)'}</strong><br>
             <input type="text" class="pin-name-input" placeholder="自訂名稱" 
                    value="${currentName}" 
                    onchange="updatePinName('${devId}', ${pin}, this.value)">
@@ -815,7 +887,7 @@
     } else {
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
-        ALL_PINS.forEach(pin => {
+        PWM_PINS.forEach(pin => {
           if (!devCfg.disabledPins.includes(pin)) {
             const pinLabel = getPinDisplayName(devId, pin);
             select.innerHTML += `<option value="${devId}|${pin}">${pinLabel}</option>`;
