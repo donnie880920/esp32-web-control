@@ -56,10 +56,12 @@
     .btn-secondary { background-color: var(--gray); }
     .btn-success { background-color: var(--success); }
     .slider { width: 100%; margin: 5px 0 2px 0; }
+    .slider:disabled { opacity: 0.5; cursor: not-allowed; }
     
     .ticks { display: flex; justify-content: space-between; font-size: 11px; color: #666; margin-bottom: 8px; }
     .tick-btn { cursor: pointer; padding: 2px 4px; border-radius: 3px; background: #eee; }
     .tick-btn:hover { background: #007bff; color: white; }
+    .tick-btn.disabled { opacity: 0.5; pointer-events: none; }
 
     .grid-pins { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 10px; }
     .pin-box { border: 1px solid #ccc; padding: 10px; text-align: center; border-radius: 6px; background: #fff; }
@@ -77,12 +79,13 @@
     .dual-light-card { background: #eef6ff; border: 1px dashed #007bff; border-radius: 6px; padding: 12px; margin: 10px 0; }
 
     /* 感測器卡片樣式 */
-    .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 10px; }
+    .sensor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 10px; }
     .sensor-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; text-align: center; background: #fafafa; transition: all 0.3s; }
     .sensor-card.active { background-color: #d4edda; border-color: #c3e6cb; }
     .sensor-card .sensor-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
     .sensor-card .sensor-status { font-weight: bold; font-size: 16px; color: #888; }
     .sensor-card.active .sensor-status { color: #155724; }
+    .sensor-card select { font-size: 12px; margin-top: 6px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; }
     
     .sensor-setting-box { background: #f0f4f8; padding: 10px 12px; border-radius: 6px; margin-top: 10px; border: 1px solid #d0dbe5; }
 
@@ -95,6 +98,12 @@
       border-radius: 6px;
       margin: 10px 0;
       font-size: 13px;
+    }
+    .locked-hint {
+      color: #dc3545;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 8px;
     }
   </style>
 </head>
@@ -132,8 +141,8 @@
   <!-- TAB 2: 感測器狀態監控頁面 -->
   <div id="tab-sensors" class="tab-content">
     <div class="card">
-      <h3>感測器 / 開關狀態 (GPIO 8 ~ 10)</h3>
-      <p style="color: #666; font-size: 14px;">即時監控 ESP32 人體感測器或開關輸入狀態。</p>
+      <h3>感測器 / 開關狀態與觸發邏輯設定 (GPIO 8 ~ 10)</h3>
+      <p style="color: #666; font-size: 14px;">設定感測器平時未對地/高電位與對地觸發時的動作邏輯。</p>
       <div id="sensorListContainer"></div>
     </div>
   </div>
@@ -351,7 +360,8 @@
         deviceConfigs[deviceId] = {
           name: device.name || `ESP32_${deviceId.substr(0,4)}`,
           disabledPins: [],
-          pinNames: {}
+          pinNames: {},
+          sensorModes: {} // 記錄 GPIO 8-10 觸發邏輯: 'low' (對地觸發) 或 'high' (高電位觸發)
         };
         saveLocalData();
       }
@@ -387,7 +397,7 @@
     }
   }
 
-  // 處理 ESP32 傳回的 Notify 訊號（支援特定群組綁定與延遲關閉）
+  // 處理 ESP32 傳回的 Notify 訊號
   function handleBleNotify(deviceId, event) {
     const value = new TextDecoder().decode(event.target.value).trim();
     console.log("收到藍芽 Notification:", value);
@@ -395,17 +405,28 @@
     const parts = value.split(',');
     if (parts[0] === 'SENSOR' && parts.length >= 3) {
       const pin = parseInt(parts[1]);
-      const state = parseInt(parts[2]) === 1;
+      const rawVal = parseInt(parts[2]); // 0 表示 LOW (對地), 1 表示 HIGH (高電位)
       const sensorKey = `${deviceId}_${pin}`;
       
-      sensorStates[sensorKey] = state;
+      const cfg = deviceConfigs[deviceId];
+      const sensorMode = (cfg && cfg.sensorModes && cfg.sensorModes[pin]) ? cfg.sensorModes[pin] : 'low'; // 預設 low 代表對地觸發
+
+      // 判斷是否符合觸發條件
+      let isTriggered = false;
+      if (sensorMode === 'low') {
+        isTriggered = (rawVal === 0); // 低電位對地觸發
+      } else {
+        isTriggered = (rawVal === 1); // 高電位觸發
+      }
+
+      sensorStates[sensorKey] = isTriggered;
       renderSensors();
 
       // 搜尋綁定此感測器的所有群組
       const targetGroups = groups.filter(g => g.boundSensor === sensorKey);
 
       targetGroups.forEach(targetGroup => {
-        // 若感測器被使用者手動關閉，則忽視連動邏輯
+        // 若感測器關閉，不進行動態亮燈連動
         if (targetGroup.sensorEnabled === false) return;
 
         const grpId = targetGroup.id;
@@ -415,15 +436,14 @@
           sensorOverrideStates[grpId] = {
             active: false,
             previousVal: 0,
-            manualInterfered: false,
             timer: null
           };
         }
 
         const stateObj = sensorOverrideStates[grpId];
 
-        if (state) {
-          // 有人觸發 (HIGH) -> 如果有進行中的延遲關閉定時器，立即清除
+        if (isTriggered) {
+          // 觸發對地/感應 -> 清除延遲關閉定時器
           if (stateObj.timer) {
             clearTimeout(stateObj.timer);
             stateObj.timer = null;
@@ -432,22 +452,17 @@
           if (!stateObj.active) {
             stateObj.active = true;
             stateObj.previousVal = targetGroup.lastPower !== undefined ? targetGroup.lastPower : 0;
-            stateObj.manualInterfered = false; // 重置手動介入標記
-            
             // 觸發亮燈 (最高亮度 255)
             setGroupPwm(grpId, 255, false);
           }
         } else {
-          // 離開/感測結束 (LOW) -> 啟動延遲倒數
+          // 未觸發/斷開對地 -> 啟動延遲倒數與熄滅/還原
           if (stateObj.active && !stateObj.timer) {
             stateObj.timer = setTimeout(() => {
               stateObj.active = false;
               stateObj.timer = null;
-              
-              // 若倒數期間無手動拉滑桿，還原感應前的亮度
-              if (!stateObj.manualInterfered) {
-                setGroupPwm(grpId, stateObj.previousVal, false);
-              }
+              // 恢復為原本亮度/關燈
+              setGroupPwm(grpId, stateObj.previousVal, false);
             }, delaySeconds * 1000);
           }
         }
@@ -505,16 +520,31 @@
     let html = '';
     devIds.forEach(devId => {
       const devCfg = deviceConfigs[devId];
+      if (!devCfg.sensorModes) devCfg.sensorModes = {};
+
       let cardsHtml = SENSOR_PINS.map(pin => {
         if (devCfg.disabledPins.includes(pin)) return '';
 
         const pinLabel = getPinDisplayName(devId, pin);
         const isTriggered = sensorStates[`${devId}_${pin}`] || false;
+        const currentMode = devCfg.sensorModes[pin] || 'low'; // 預設 low
 
         return `
           <div class="sensor-card ${isTriggered ? 'active' : ''}">
             <div class="sensor-title">${pinLabel}</div>
-            <div class="sensor-status">${isTriggered ? 'HIGH (觸發)' : 'LOW (正常)'}</div>
+            <div class="sensor-status">${isTriggered ? '亮燈觸發中' : '平時狀態 (熄滅)'}</div>
+            <div style="margin-top:10px; text-align:left; font-size:12px; color:#555;">
+              <label><strong>觸發邏輯設定：</strong></label>
+              <select onchange="updateSensorMode('${devId}', ${pin}, this.value)">
+                <option value="low" ${currentMode === 'low' ? 'selected' : ''}>Low Active (對地接地亮燈)</option>
+                <option value="high" ${currentMode === 'high' ? 'selected' : ''}>High Active (高電位亮燈)</option>
+              </select>
+            </div>
+            <div style="margin-top:6px; font-size:11px; color:#777; text-align:left;">
+              ${currentMode === 'low' 
+                ? '• 平時 (未對地/高電位): 燈熄滅<br>• 觸發 (對地/低電位): 燈開啟' 
+                : '• 平時 (對地/低電位): 燈熄滅<br>• 觸發 (未對地/高電位): 燈開啟'}
+            </div>
           </div>`;
       }).join('');
 
@@ -526,6 +556,15 @@
     });
 
     container.innerHTML = html;
+  }
+
+  function updateSensorMode(deviceId, pin, mode) {
+    if (deviceConfigs[deviceId]) {
+      if (!deviceConfigs[deviceId].sensorModes) deviceConfigs[deviceId].sensorModes = {};
+      deviceConfigs[deviceId].sensorModes[pin] = mode;
+      saveLocalData();
+      renderSensors();
+    }
   }
 
   function calculateDualLightPwm(ctVal, powerVal) {
@@ -556,6 +595,10 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
+      const isSensorActive = grp.boundSensor && (grp.sensorEnabled !== false); // 開關打開狀態
+      const disabledAttr = isSensorActive ? 'disabled' : '';
+      const disabledClass = isSensorActive ? 'disabled' : '';
+
       let dualControlsHtml = grp.dualLights.map(dl => {
         const ctVal = dl.ct !== undefined ? dl.ct : 128;
         const powerVal = dl.power !== undefined ? dl.power : 255;
@@ -569,25 +612,25 @@
             <div style="font-size:12px; color:#666; margin-top:2px;">[暖光: GPIO ${dl.warmPin} | 冷光: GPIO ${dl.coolPin}]</div>
             
             <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold;">色溫調整 (0=暖光, 255=冷光)：</label>
-            <input type="range" min="0" max="255" value="${ctVal}" id="ct-slider-${grp.id}-${dl.id}" class="slider"
+            <input type="range" min="0" max="255" value="${ctVal}" id="ct-slider-${grp.id}-${dl.id}" class="slider" ${disabledAttr}
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
             <div class="ticks">
-              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 0)">100%暖光</span>
-              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 64)">25%冷光</span>
-              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 128)">50%中性</span>
-              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 191)">75%冷光</span>
-              <span class="tick-btn" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 255)">100%冷光</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 0)">100%暖光</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 64)">25%冷光</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 128)">50%中性</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 191)">75%冷光</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightCTQuick('${grp.id}', '${dl.id}', 255)">100%冷光</span>
             </div>
 
             <label style="font-size:13px; margin-top:8px; display:block; font-weight:bold; color:#0056b3;">燈具功率調整 (等比例縮放 PWM)：</label>
-            <input type="range" min="0" max="255" value="${powerVal}" id="power-slider-${grp.id}-${dl.id}" class="slider"
+            <input type="range" min="0" max="255" value="${powerVal}" id="power-slider-${grp.id}-${dl.id}" class="slider" ${disabledAttr}
                    oninput="updateDualLight('${grp.id}', '${dl.id}')">
             <div class="ticks">
-              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 0)">0%</span>
-              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 64)">25%</span>
-              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 128)">50%</span>
-              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 191)">75%</span>
-              <span class="tick-btn" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 255)">100%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 0)">0%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 64)">25%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 128)">50%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 191)">75%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setDualLightPowerQuick('${grp.id}', '${dl.id}', 255)">100%</span>
             </div>
           </div>
         `;
@@ -602,34 +645,34 @@
               <span style="font-weight:bold; font-size:14px;">${pinLabel}</span>
               <span id="val-${grp.id}-${m.deviceId}-${m.pin}">0%</span>
             </div>
-            <input type="range" min="0" max="255" value="0" 
+            <input type="range" min="0" max="255" value="0" ${disabledAttr}
                    id="slider-${grp.id}-${m.deviceId}-${m.pin}" class="slider" 
                    oninput="
                      sendBatchPwmCommand('${m.deviceId}', [{pin: ${m.pin}, val: parseInt(this.value)}]);
                      document.getElementById('val-${grp.id}-${m.deviceId}-${m.pin}').innerText = getPercentStr(this.value);
                    ">
             <div class="ticks">
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 0)">0%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 64)">25%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 128)">50%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 191)">75%</span>
-              <span class="tick-btn" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 255)">100%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 0)">0%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 64)">25%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 128)">50%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 191)">75%</span>
+              <span class="tick-btn ${disabledClass}" onclick="setSingleSlider('${grp.id}', '${m.deviceId}', ${m.pin}, 255)">100%</span>
             </div>
           </div>`;
       }).join('');
 
       const masterVal = grp.lastPower !== undefined ? grp.lastPower : 255;
 
-      // 如果群組有綁定感測器，產生感測器開關工具列
+      // 感測器開關列
       let sensorBarHtml = '';
       if (grp.boundSensor) {
         const [sDevId, sPin] = grp.boundSensor.split('_');
         const sensorName = getPinDisplayName(sDevId, sPin);
-        const isEnabled = grp.sensorEnabled !== false; // 預設開啟
+        const isEnabled = grp.sensorEnabled !== false;
 
         sensorBarHtml = `
           <div class="sensor-control-bar">
-            <span>📡 連動感測器：<strong>${sensorName}</strong></span>
+            <span>📡 連動感測器：<strong>${sensorName}</strong> ${isEnabled ? '<span class="locked-hint">🔒 (已由感測器完全接管，手動控制已鎖定)</span>' : ''}</span>
             <button class="btn ${isEnabled ? 'btn-success' : 'btn-secondary'}" style="padding: 4px 10px; font-size: 12px;" onclick="toggleSensorEnable('${grp.id}')">
               ${isEnabled ? '感測器：已開啟' : '感測器：已關閉'}
             </button>
@@ -647,13 +690,13 @@
           ${sensorBarHtml}
           
           <label style="font-weight:bold;">群組總功率同步調整：</label>
-          <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" oninput="setGroupPwm('${grp.id}', this.value, true)">
+          <input type="range" min="0" max="255" value="${masterVal}" id="grp-master-slider-${grp.id}" class="slider" ${disabledAttr} oninput="setGroupPwm('${grp.id}', this.value, true)">
           <div class="ticks">
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 64)">25%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 128)">50%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 191)">75%</span>
-            <span class="tick-btn" onclick="setMasterGroupSlider('${grp.id}', 255)">100%</span>
+            <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 0)">0%</span>
+            <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 64)">25%</span>
+            <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 128)">50%</span>
+            <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 191)">75%</span>
+            <span class="tick-btn ${disabledClass}" onclick="setMasterGroupSlider('${grp.id}', 255)">100%</span>
           </div>
 
           <button class="btn btn-secondary" style="font-size:12px; margin-top:8px;" onclick="toggleGroupDetail('${grp.id}')">下拉單獨調整燈具 ▼</button>
@@ -671,8 +714,9 @@
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
 
-    if (isUserManual && sensorOverrideStates[groupId]) {
-      sensorOverrideStates[groupId].manualInterfered = true;
+    // 若感測器開啟中且為手動拉滑桿，拒絕操作
+    if (isUserManual && grp.boundSensor && grp.sensorEnabled !== false) {
+      return;
     }
 
     grp.lastPower = val;
@@ -728,9 +772,7 @@
     const grp = groups.find(g => g.id === groupId);
     if (!grp || !grp.dualLights) return;
 
-    if (sensorOverrideStates[groupId]) {
-      sensorOverrideStates[groupId].manualInterfered = true;
-    }
+    if (grp.boundSensor && grp.sensorEnabled !== false) return;
 
     const dl = grp.dualLights.find(d => d.id === dualLightId);
     if (!dl) return;
@@ -760,6 +802,9 @@
   }
 
   function setDualLightCTQuick(groupId, dualLightId, val) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp && grp.boundSensor && grp.sensorEnabled !== false) return;
+
     const slider = document.getElementById(`ct-slider-${groupId}-${dualLightId}`);
     if (slider) {
       slider.value = val;
@@ -768,6 +813,9 @@
   }
 
   function setDualLightPowerQuick(groupId, dualLightId, val) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp && grp.boundSensor && grp.sensorEnabled !== false) return;
+
     const slider = document.getElementById(`power-slider-${groupId}-${dualLightId}`);
     if (slider) {
       slider.value = val;
@@ -776,6 +824,9 @@
   }
 
   function setMasterGroupSlider(groupId, val) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp && grp.boundSensor && grp.sensorEnabled !== false) return;
+
     const slider = document.getElementById(`grp-master-slider-${groupId}`);
     if (slider) {
       slider.value = val;
@@ -784,9 +835,9 @@
   }
 
   function setSingleSlider(groupId, deviceId, pin, val) {
-    if (sensorOverrideStates[groupId]) {
-      sensorOverrideStates[groupId].manualInterfered = true;
-    }
+    const grp = groups.find(g => g.id === groupId);
+    if (grp && grp.boundSensor && grp.sensorEnabled !== false) return;
+
     const slider = document.getElementById(`slider-${groupId}-${deviceId}-${pin}`);
     if (slider) {
       slider.value = val;
@@ -808,7 +859,6 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
-      // 產生可綁定的感測器選單
       let sensorOptionsHtml = `<option value="">-- 未綁定感測器 --</option>`;
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
@@ -855,7 +905,6 @@
             <button class="btn btn-danger" style="padding:4px 8px;" onclick="deleteGroup('${grp.id}')">刪除群組</button>
           </div>
 
-          <!-- 感測器聯動與延遲關閉設定區 -->
           <div class="sensor-setting-box">
             <h5 style="margin:0 0 8px 0; color:#0056b3;">📡 連動人體感測器設定</h5>
             <div style="display:flex; gap:15px; flex-wrap:wrap; align-items:center;">
@@ -892,6 +941,7 @@
     if (grp) {
       grp.boundSensor = sensorKey;
       saveLocalData();
+      renderGroupControl();
     }
   }
 
