@@ -83,6 +83,8 @@
     .sensor-card .sensor-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
     .sensor-card .sensor-status { font-weight: bold; font-size: 16px; color: #888; }
     .sensor-card.active .sensor-status { color: #155724; }
+    
+    .sensor-setting-box { background: #f0f4f8; padding: 10px 12px; border-radius: 6px; margin-top: 10px; border: 1px solid #d0dbe5; }
   </style>
 </head>
 <body>
@@ -221,7 +223,7 @@
   let deviceConfigs = {};    
   let sensorStates = {}; 
 
-  // 感測器狀態管理：記憶觸發前的亮度狀態與手動介入狀態
+  // 感測器狀態管理：記憶觸發前的亮度、手動介入狀態與延遲定時器
   let sensorOverrideStates = {}; 
 
   window.onload = function() {
@@ -374,7 +376,7 @@
     }
   }
 
-  // 處理 ESP32 傳回的 Notify 訊號（包含記憶還原與手動優先邏輯）
+  // 處理 ESP32 傳回的 Notify 訊號（支援特定群組綁定與延遲關閉）
   function handleBleNotify(deviceId, event) {
     const value = new TextDecoder().decode(event.target.value).trim();
     console.log("收到藍芽 Notification:", value);
@@ -383,46 +385,59 @@
     if (parts[0] === 'SENSOR' && parts.length >= 3) {
       const pin = parseInt(parts[1]);
       const state = parseInt(parts[2]) === 1;
+      const sensorKey = `${deviceId}_${pin}`;
       
-      sensorStates[`${deviceId}_${pin}`] = state;
+      sensorStates[sensorKey] = state;
       renderSensors();
 
-      if (groups.length > 0) {
-        const targetGroup = groups[0]; // 假設預設聯動第一個群組
+      // 搜尋綁定此感測器的所有群組
+      const targetGroups = groups.filter(g => g.boundSensor === sensorKey);
+
+      targetGroups.forEach(targetGroup => {
         const grpId = targetGroup.id;
+        const delaySeconds = targetGroup.sensorDelay !== undefined ? parseInt(targetGroup.sensorDelay) : 10;
 
         if (!sensorOverrideStates[grpId]) {
           sensorOverrideStates[grpId] = {
             active: false,
             previousVal: 0,
-            manualInterfered: false
+            manualInterfered: false,
+            timer: null
           };
         }
 
         const stateObj = sensorOverrideStates[grpId];
 
         if (state) {
-          // 感測器剛被觸發 (HIGH)
+          // 有人觸發 (HIGH) -> 如果有進行中的延遲關閉定時器，立即清除
+          if (stateObj.timer) {
+            clearTimeout(stateObj.timer);
+            stateObj.timer = null;
+          }
+
           if (!stateObj.active) {
             stateObj.active = true;
             stateObj.previousVal = targetGroup.lastPower !== undefined ? targetGroup.lastPower : 0;
-            stateObj.manualInterfered = false; // 重置手動介入狀態
+            stateObj.manualInterfered = false; // 重置手動介入標記
             
-            // 將群組開至最高亮度 (255)
+            // 觸發亮燈 (最高亮度 255)
             setGroupPwm(grpId, 255, false);
           }
         } else {
-          // 感測器時間結束 / 離開 (LOW)
-          if (stateObj.active) {
-            stateObj.active = false;
-            
-            // 如果期間使用者沒有手動改過亮度，則還原回感應之前的亮度
-            if (!stateObj.manualInterfered) {
-              setGroupPwm(grpId, stateObj.previousVal, false);
-            }
+          // 離開/感測結束 (LOW) -> 啟動延遲倒數
+          if (stateObj.active && !stateObj.timer) {
+            stateObj.timer = setTimeout(() => {
+              stateObj.active = false;
+              stateObj.timer = null;
+              
+              // 若倒數期間無手動拉滑桿，還原感應前的亮度
+              if (!stateObj.manualInterfered) {
+                setGroupPwm(grpId, stateObj.previousVal, false);
+              }
+            }, delaySeconds * 1000);
           }
         }
-      }
+      });
     }
   }
 
@@ -609,13 +624,11 @@
     });
   }
 
-  // 修改 setGroupPwm，加入 isUserManual 判斷
   function setGroupPwm(groupId, val, isUserManual = false) {
     val = parseInt(val);
     const grp = groups.find(g => g.id === groupId);
     if (!grp) return;
 
-    // 如果使用者親自滑動了拉桿，鎖定感測器結束時的還原功能，以使用者手動為主
     if (isUserManual && sensorOverrideStates[groupId]) {
       sensorOverrideStates[groupId].manualInterfered = true;
     }
@@ -753,6 +766,20 @@
       if (!grp.members) grp.members = [];
       if (!grp.dualLights) grp.dualLights = [];
 
+      // 產生可綁定的感測器選單
+      let sensorOptionsHtml = `<option value="">-- 未綁定感測器 --</option>`;
+      Object.keys(deviceConfigs).forEach(devId => {
+        const devCfg = deviceConfigs[devId];
+        SENSOR_PINS.forEach(pin => {
+          if (!devCfg.disabledPins.includes(pin)) {
+            const pinKey = `${devId}_${pin}`;
+            const pinLabel = getPinDisplayName(devId, pin);
+            const isSelected = grp.boundSensor === pinKey ? 'selected' : '';
+            sensorOptionsHtml += `<option value="${pinKey}" ${isSelected}>${pinLabel}</option>`;
+          }
+        });
+      });
+
       let memberOptionsHtml = '';
       Object.keys(deviceConfigs).forEach(devId => {
         const devCfg = deviceConfigs[devId];
@@ -777,11 +804,31 @@
         </div>
       `).join('');
 
+      const currentDelay = grp.sensorDelay !== undefined ? grp.sensorDelay : 10;
+
       container.innerHTML += `
         <div class="card" style="border: 1px solid #ddd;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <h4>${grp.name}</h4>
             <button class="btn btn-danger" style="padding:4px 8px;" onclick="deleteGroup('${grp.id}')">刪除群組</button>
+          </div>
+
+          <!-- 感測器聯動與延遲關閉設定區 -->
+          <div class="sensor-setting-box">
+            <h5 style="margin:0 0 8px 0; color:#0056b3;">📡 連動人體感測器設定</h5>
+            <div style="display:flex; gap:15px; flex-wrap:wrap; align-items:center;">
+              <div>
+                <label style="font-size:13px; font-weight:bold;">選擇感測器：</label>
+                <select style="padding:4px; font-size:13px;" onchange="updateGroupSensor('${grp.id}', this.value)">
+                  ${sensorOptionsHtml}
+                </select>
+              </div>
+              <div>
+                <label style="font-size:13px; font-weight:bold;">感測結束延遲關閉時間 (秒)：</label>
+                <input type="number" min="0" max="3600" value="${currentDelay}" style="width:70px; padding:3px; font-size:13px;" 
+                       onchange="updateGroupSensorDelay('${grp.id}', this.value)"> 秒
+              </div>
+            </div>
           </div>
           
           <div style="border-top:1px solid #eee; margin-top:10px; padding-top:10px;">
@@ -798,6 +845,22 @@
     });
   }
 
+  function updateGroupSensor(groupId, sensorKey) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp) {
+      grp.boundSensor = sensorKey;
+      saveLocalData();
+    }
+  }
+
+  function updateGroupSensorDelay(groupId, delayVal) {
+    const grp = groups.find(g => g.id === groupId);
+    if (grp) {
+      grp.sensorDelay = parseInt(delayVal) || 0;
+      saveLocalData();
+    }
+  }
+
   function promptCreateGroup() {
     const name = prompt("請輸入新群組名稱：", "辦公區燈光");
     if (!name) return;
@@ -805,6 +868,8 @@
     groups.push({
       id: 'grp_' + Date.now(),
       name: name,
+      boundSensor: "",
+      sensorDelay: 10,
       members: [],
       dualLights: [],
       lastPower: 255
